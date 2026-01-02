@@ -25,9 +25,9 @@ if GEMINI_API_KEY:
 
 # --- Google Sheets Logic (History Only) ---
 def get_accounting_history():
-    print("Fetching accounting history from sheets...")
+    print("Fetching accounting history (Semantic Reference) from sheets...")
     if not os.path.exists(GOOGLE_CREDENTIALS_FILE):
-        return {}
+        return []
     try:
         scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
         creds = ServiceAccountCredentials.from_json_keyfile_name(GOOGLE_CREDENTIALS_FILE, scope)
@@ -36,26 +36,29 @@ def get_accounting_history():
         sheet = sh.worksheet("仕訳明細")
         data = sheet.get_all_values()
         
-        # 履歴の辞書作成 { 取引先: 借方勘定 }
-        history = {}
+        # 直近の履歴を取得（ヘッダーを除く最後から150件程度）
+        # 形式: [{"取引先": row[4], "摘要": row[5], "勘定科目": row[1]}, ...]
+        history = []
         if len(data) > 1:
-            for row in data[1:]:
-                if len(row) >= 5:
-                    counterparty = row[4].strip()
-                    debit = row[1].strip()
-                    if counterparty and debit:
-                        history[counterparty] = debit
+            recent_rows = data[1:][-150:]
+            for row in recent_rows:
+                if len(row) >= 6:
+                    history.append({
+                        "counterparty": row[4].strip(),
+                        "memo": row[5].strip(),
+                        "account": row[1].strip()
+                    })
         return history
     except Exception as e:
         print(f"Error fetching history: {e}")
-        return {}
+        return []
 
 import csv
 import io
 
 # --- CSV Logic ---
-def analyze_csv(csv_bytes, history={}):
-    print("Analyzing CSV statement...")
+def analyze_csv(csv_bytes, history=[]):
+    print("Analyzing CSV statement with semantic memory...")
     try:
         text = csv_bytes.decode('shift_jis', errors='replace') # 日本のカード会社はShift-JISが多い
         if '確定日' not in text and '利用日' not in text and ',' not in text:
@@ -69,15 +72,17 @@ def analyze_csv(csv_bytes, history={}):
         csv_text = "\n".join([",".join(row) for row in rows[:50]]) # 最初の50行程度
         
         model = genai.GenerativeModel('gemini-2.0-flash-exp')
-        history_str = json.dumps(history, ensure_ascii=False, indent=2) if history else "なし"
+        # 履歴を読みやすく整形
+        history_str = "\n".join([f"- {h['counterparty']} ({h['memo']}) => {h['account']}" for h in history]) if history else "なし"
         
         prompt = f"""
-        あなたは優秀な会計士です。以下のクレジットカード明細（CSV形式）から、仕訳データを抽出してください。
+        あなたは優秀な会計士です。明細データから仕訳を作成してください。
         
-        履歴データ（優先）:
+        過去の仕訳履歴（参考）：
+        同じ取引先でも「摘要（メモ）」の内容が似ている場合は、過去と同じ「借方勘定科目」を割り当ててください。
         {history_str}
 
-        JSON形式（配列）で出力してください：
+        JSON形式（配列）で出力：
         [
           {{
             "date": "YYYY-MM-DD",
@@ -85,7 +90,7 @@ def analyze_csv(csv_bytes, history={}):
             "credit_account": "貸方勘定科目",
             "amount": 数値,
             "counterparty": "取引先名",
-            "memo": "カード利用明細"
+            "memo": "詳細・摘要"
           }}
         ]
         
@@ -130,8 +135,8 @@ def get_existing_entries():
         return set()
 
 # --- AI Logic ---
-def analyze_document(file_bytes, mime_type, history={}):
-    print(f"Analyzing {mime_type} with history context...")
+def analyze_document(file_bytes, mime_type, history=[]):
+    print(f"Analyzing {mime_type} with semantic memory...")
     models_to_try = ['gemini-2.0-flash-exp', 'gemini-1.5-flash']
     
     history_str = json.dumps(history, ensure_ascii=False, indent=2) if history else "なし"
