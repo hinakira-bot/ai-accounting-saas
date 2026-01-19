@@ -334,7 +334,7 @@ def save_to_sheets(data, spreadsheet_id, access_token):
             item['amount'] = clean_amt
             sanitized_data.append(item)
 
-        # 4. Save Data (New Order)
+        # 4. Save Data (CORE OPERATION - Must Succeed)
         rows = []
         for item in sanitized_data:
             rows.append([
@@ -342,129 +342,101 @@ def save_to_sheets(data, spreadsheet_id, access_token):
                 str(item.get('debit_account', '')),
                 str(item.get('credit_account', '')),
                 item.get('amount', 0),
-                item.get('tax_amount', 0),    # Moved here
+                item.get('tax_amount', 0),
                 str(item.get('counterparty', '')),
                 str(item.get('memo', '')),
                 item.get('evidence_url', '')
             ])
         if rows:
-            sheet_auto.append_rows(rows, value_input_option='USER_ENTERED')
+            try:
+                sheet_auto.append_rows(rows, value_input_option='USER_ENTERED')
+            except Exception as e:
+                print(f"Critical Error appending rows: {e}")
+                return False
 
-        # 5. Advanced PL & BS Formulas
-        
-        # P/L Sheet
-        try:
-            sheet_pl = sh.worksheet("損益計算書")
-        except:
-            sheet_pl = sh.add_worksheet(title="損益計算書", rows="100", cols="10")
+        # --- Reporting & Views (Fail-Soft) ---
+        # Wraps secondary updates in try-except so core save succeeds even if views fail.
+        try: 
+            # 5. Advanced PL & BS Formulas
             
-        sheet_pl.clear()
-        sheet_pl.update("A1", [["損益計算書 (P/L)"]])
-        sheet_pl.update("A3", [["【経費 (借方)】", "金額", "", "【売上 (貸方)】", "金額"]])
-        
-        bs_items_list = "'現金|小口現金|普通預金|売掛金|未収入金|棚卸資産|買掛金|未払金|借入金|預り金|資本金|元入金|事業主貸|事業主借'"
-        
-        # P/L Formulas: Col indices rely on A=1, B=2, C=3, D=4(Amount). 
-        # Since Amount is still D (4th), P/L formulas remain valid.
-        f_debit = f"=QUERY({{'仕訳明細'!A2:H; '仕訳明細（手入力）'!A2:H}}, \"select Col2, sum(Col4) where Col2 is not null and not Col2 matches {bs_items_list} group by Col2 label sum(Col4) ''\", 0)"
-        sheet_pl.update_acell("A4", f_debit)
-        
-        f_credit = f"=QUERY({{'仕訳明細'!A2:H; '仕訳明細（手入力）'!A2:H}}, \"select Col3, sum(Col4) where Col3 is not null and not Col3 matches {bs_items_list} group by Col3 label sum(Col4) ''\", 0)"
-        sheet_pl.update_acell("D4", f_credit)
-
-        # B/S Sheet
-        try:
-            sheet_bs = sh.worksheet("貸借対照表")
-        except:
-            sheet_bs = sh.add_worksheet(title="貸借対照表", rows="100", cols="6")
-        
-        sheet_bs.clear()
-        sheet_bs.update("A1", [["貸借対照表 (B/S)"]])
-        sheet_bs.update("A2", [["※期首残高 ＋ (借方合計 - 貸方合計) で算出"]])
-        
-        # Organize Accounts by Type
-        assets = []
-        liabilities = []
-        equity = []
-        
-        # DEFAULT_ACCOUNTS structure: [Name, Type]
-        # Types: 資産, 負債, 純資産, 収益, 費用
-        for row in DEFAULT_ACCOUNTS[1:]:
-            name, type_ = row[0], row[1]
-            if type_ == "資産": assets.append(name)
-            elif type_ == "負債": liabilities.append(name)
-            elif type_ == "純資産": equity.append(name)
+            # P/L Sheet
+            try:
+                sheet_pl = sh.worksheet("損益計算書")
+            except:
+                sheet_pl = sh.add_worksheet(title="損益計算書", rows="100", cols="10")
+                
+            sheet_pl.clear()
+            sheet_pl.update("A1", [["損益計算書 (P/L)"]])
+            sheet_pl.update("A3", [["【経費 (借方)】", "金額", "", "【売上 (貸方)】", "金額"]])
             
-        bs_rows = []
-        bs_rows.append(["【資産の部】", "金額"])
-        for acc in assets:
-            # Asset: Open + (Debit - Credit)
-            # D=Amount(Col4), B=Debit(Col2), C=Credit(Col3)
-            # Need to handle '仕訳明細' and '仕訳明細（手入力）'
-            f = f"=SUMIF('期首残高'!A:A, \"{acc}\", '期首残高'!B:B) + (SUMIF('仕訳明細'!B:B, \"{acc}\", '仕訳明細'!D:D) + SUMIF('仕訳明細（手入力）'!B:B, \"{acc}\", '仕訳明細（手入力）'!D:D)) - (SUMIF('仕訳明細'!C:C, \"{acc}\", '仕訳明細'!D:D) + SUMIF('仕訳明細（手入力）'!C:C, \"{acc}\", '仕訳明細（手入力）'!D:D))"
-            bs_rows.append([acc, f])
+            bs_items_list = "'現金|小口現金|普通預金|売掛金|未収入金|棚卸資産|買掛金|未払金|借入金|預り金|資本金|元入金|事業主貸|事業主借'"
             
-        bs_rows.append(["", ""])
-        bs_rows.append(["【負債の部】", "金額"])
-        for acc in liabilities:
-            # Liability: Open + (Credit - Debit)
-            f = f"=SUMIF('期首残高'!A:A, \"{acc}\", '期首残高'!B:B) + (SUMIF('仕訳明細'!C:C, \"{acc}\", '仕訳明細'!D:D) + SUMIF('仕訳明細（手入力）'!C:C, \"{acc}\", '仕訳明細（手入力）'!D:D)) - (SUMIF('仕訳明細'!B:B, \"{acc}\", '仕訳明細'!D:D) + SUMIF('仕訳明細（手入力）'!B:B, \"{acc}\", '仕訳明細（手入力）'!D:D))"
-            bs_rows.append([acc, f])
-
-        bs_rows.append(["", ""])
-        bs_rows.append(["【純資産の部】", "金額"])
-        for acc in equity:
-            # Equity: Open + (Credit - Debit) ... + NetIncome (complicated, let's keep basic for now)
-            # Net Income is derived from P/L usually added to Retained Earnings.
-            # strict B/S won't balance without Net Income.
-            # For this tool, we just show running balances.
-            f = f"=SUMIF('期首残高'!A:A, \"{acc}\", '期首残高'!B:B) + (SUMIF('仕訳明細'!C:C, \"{acc}\", '仕訳明細'!D:D) + SUMIF('仕訳明細（手入力）'!C:C, \"{acc}\", '仕訳明細（手入力）'!D:D)) - (SUMIF('仕訳明細'!B:B, \"{acc}\", '仕訳明細'!D:D) + SUMIF('仕訳明細（手入力）'!B:B, \"{acc}\", '仕訳明細（手入力）'!D:D))"
-            bs_rows.append([acc, f])
-
-        # Batch update logic
-        # Gspread append_rows doesn't work well for formulas mixed.
-        # Use update() with range.
-        sheet_bs.update(f"A3:B{3+len(bs_rows)}", bs_rows, value_input_option='USER_ENTERED')
-
-
-        # 6. General Ledger (総勘定元帳)
-        # Recreate every time to ensure fresh state and working dropdowns
-        try:
-            ws_gl = sh.worksheet("総勘定元帳")
-            sh.del_worksheet(ws_gl)
-        except:
-            pass
+            f_debit = f"=QUERY({{'仕訳明細'!A2:H; '仕訳明細（手入力）'!A2:H}}, \"select Col2, sum(Col4) where Col2 is not null and not Col2 matches {bs_items_list} group by Col2 label sum(Col4) ''\", 0)"
+            sheet_pl.update_acell("A4", f_debit)
             
-        ws_gl = sh.add_worksheet(title="総勘定元帳", rows="1000", cols="8")
+            f_credit = f"=QUERY({{'仕訳明細'!A2:H; '仕訳明細（手入力）'!A2:H}}, \"select Col3, sum(Col4) where Col3 is not null and not Col3 matches {bs_items_list} group by Col3 label sum(Col4) ''\", 0)"
+            sheet_pl.update_acell("D4", f_credit)
 
-        # Setup Content
-        ws_gl.update("A1", [["科目選択:", "現金", "←プルダウンで選択"]])
-        ws_gl.update("B1", "現金") # Default value to avoid empty query error
-        ws_gl.update("A3", [["日付", "借方", "貸方", "金額(税込)", "摘要", "借/貸判定", "残高"]])
-
-        # 1. Set Validation Logic (Dropdown)
-        try:
-            # Point to Master list A2:A100
-            rule_gl = gspread.utils.ValidationCondition("ONE_OF_RANGE", ["=勘定科目マスタ!$A$2:$A$100"])
-            ws_gl.set_data_validation("B1", rule_gl)
-            # Also apply to detail sheets while we're at it, just in case
-            # (Though detail sheets are handled above)
+            # B/S Sheet
+            try:
+                sheet_bs = sh.worksheet("貸借対照表")
+            except:
+                sheet_bs = sh.add_worksheet(title="貸借対照表", rows="100", cols="6")
+            
+            sheet_bs.clear()
+            sheet_bs.update("A1", [["貸借対照表 (B/S)"]])
+            sheet_bs.update("A2", [["※期首残高 ＋ (借方合計 - 貸方合計) で算出"]])
+            
+            assets, liabilities, equity = [], [], []
+            for row in DEFAULT_ACCOUNTS[1:]:
+                name, type_ = row[0], row[1]
+                if type_ == "資産": assets.append(name)
+                elif type_ == "負債": liabilities.append(name)
+                elif type_ == "純資産": equity.append(name)
+                
+            bs_rows = []
+            bs_rows.append(["【資産の部】", "金額"])
+            for acc in assets:
+                f = f"=SUMIF('期首残高'!A:A, \"{acc}\", '期首残高'!B:B) + (SUMIF('仕訳明細'!B:B, \"{acc}\", '仕訳明細'!D:D) + SUMIF('仕訳明細（手入力）'!B:B, \"{acc}\", '仕訳明細（手入力）'!D:D)) - (SUMIF('仕訳明細'!C:C, \"{acc}\", '仕訳明細'!D:D) + SUMIF('仕訳明細（手入力）'!C:C, \"{acc}\", '仕訳明細（手入力）'!D:D))"
+                bs_rows.append([acc, f])
+            bs_rows.append(["", ""])
+            bs_rows.append(["【負債の部】", "金額"])
+            for acc in liabilities:
+                f = f"=SUMIF('期首残高'!A:A, \"{acc}\", '期首残高'!B:B) + (SUMIF('仕訳明細'!C:C, \"{acc}\", '仕訳明細'!D:D) + SUMIF('仕訳明細（手入力）'!C:C, \"{acc}\", '仕訳明細（手入力）'!D:D)) - (SUMIF('仕訳明細'!B:B, \"{acc}\", '仕訳明細'!D:D) + SUMIF('仕訳明細（手入力）'!B:B, \"{acc}\", '仕訳明細（手入力）'!D:D))"
+                bs_rows.append([acc, f])
+            bs_rows.append(["", ""])
+            bs_rows.append(["【純資産の部】", "金額"])
+            for acc in equity:
+                f = f"=SUMIF('期首残高'!A:A, \"{acc}\", '期首残高'!B:B) + (SUMIF('仕訳明細'!C:C, \"{acc}\", '仕訳明細'!D:D) + SUMIF('仕訳明細（手入力）'!C:C, \"{acc}\", '仕訳明細（手入力）'!D:D)) - (SUMIF('仕訳明細'!B:B, \"{acc}\", '仕訳明細'!D:D) + SUMIF('仕訳明細（手入力）'!B:B, \"{acc}\", '仕訳明細（手入力）'!D:D))"
+                bs_rows.append([acc, f])
+            sheet_bs.update(f"A3:B{3+len(bs_rows)}", bs_rows, value_input_option='USER_ENTERED')
+            
         except Exception as e:
-            print(f"GL Validation Error: {e}")
+            print(f"Reporting Logic Error (Non-Critical): {e}")
 
-        # 2. Set Formatting (Optional but good)
+        # 6. General Ledger (Safer Update Logic)
         try:
-             # Basic formatting if needed, skipped for speed
-             pass
-        except: pass
+            try:
+                ws_gl = sh.worksheet("総勘定元帳")
+                ws_gl.clear() # Clear is safer than Delete/Add
+            except:
+                ws_gl = sh.add_worksheet(title="総勘定元帳", rows="1000", cols="8")
+
+            ws_gl.update("A1", [["科目選択:", "現金", "←プルダウンで選択"]])
+            ws_gl.update("B1", "現金")
+            ws_gl.update("A3", [["日付", "借方", "貸方", "金額(税込)", "摘要", "借/貸判定", "残高"]])
+
+            try:
+                rule_gl = gspread.utils.ValidationCondition("ONE_OF_RANGE", ["=勘定科目マスタ!$A$2:$A$100"])
+                ws_gl.set_data_validation("B1", rule_gl)
+            except Exception as e:
+                print(f"GL Validation Error: {e}")
             
-        # 3. GL Query Formula
-        ws_gl.update_acell("A4", "=IF(B1=\"\",\"科目をB1で選択してください\", QUERY({'仕訳明細'!A2:H; '仕訳明細（手入力）'!A2:H}, \"select Col1, Col2, Col3, Col4, Col7 where Col2 = '\"&B1&\"' or Col3 = '\"&B1&\"' order by Col1 asc\", 0))")
-            
+            ws_gl.update_acell("A4", "=IF(B1=\"\",\"科目をB1で選択してください\", QUERY({'仕訳明細'!A2:H; '仕訳明細（手入力）'!A2:H}, \"select Col1, Col2, Col3, Col4, Col7 where Col2 = '\"&B1&\"' or Col3 = '\"&B1&\"' order by Col1 asc\", 0))")
+        except Exception as e:
+             print(f"GL Setup Error (Non-Critical): {e}")
+             
         return True
-    except Exception as e:
-        print(f"Save Error: {e}")
-        return False
 
 # --- Routes ---
 @app.route('/')
