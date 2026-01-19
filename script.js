@@ -180,20 +180,80 @@ document.addEventListener('DOMContentLoaded', () => {
             });
     }
 
+    const addManualBtn = document.getElementById('add-manual-btn');
+    let accountOptions = [];
+
+    // --- Fetch Accounts for Autocomplete ---
+    function fetchAccounts() {
+        if (accountOptions.length > 0) return;
+        fetch('/api/accounts')
+            .then(res => res.json())
+            .then(data => {
+                if (data.accounts) accountOptions = data.accounts;
+                setupDatalist();
+            })
+            .catch(err => console.error("Account fetch failed", err));
+    }
+
+    function setupDatalist() {
+        let dl = document.getElementById('account-datalist');
+        if (!dl) {
+            dl = document.createElement('datalist');
+            dl.id = 'account-datalist';
+            document.body.appendChild(dl);
+        }
+        dl.innerHTML = accountOptions.map(acc => `<option value="${acc}">`).join('');
+    }
+
+    addManualBtn.addEventListener('click', () => {
+        // Fetch accounts if not yet done (lazy load)
+        fetchAccounts();
+
+        // Add empty row
+        const newItem = {
+            date: new Date().toISOString().split('T')[0], // Today
+            debit_account: '',
+            credit_account: '',
+            amount: 0,
+            counterparty: '',
+            memo: '',
+            source: 'manual' // Flag for backend routing
+        };
+
+        extractedData.push(newItem);
+        renderResults(extractedData);
+
+        // Focus on the first input of the new row
+        setTimeout(() => {
+            const inputs = resultsTable.querySelectorAll('input');
+            if (inputs.length > 0) inputs[inputs.length - 6].focus(); // approximate
+        }, 100);
+    });
+
     function renderResults(data) {
         resultsTable.innerHTML = '';
         let hasDuplicate = false;
+
+        // Ensure datalist exists whenever rendering
+        if (accountOptions.length > 0) setupDatalist();
+        else fetchAccounts();
+
         data.forEach((item, index) => {
             if (item.is_duplicate) hasDuplicate = true;
             const row = document.createElement('tr');
             if (item.is_duplicate) row.classList.add('duplicate');
+            if (item.source === 'manual') row.style.backgroundColor = '#f0f8ff20'; // Slight highlight for manual
+
             row.innerHTML = `
-                <td><input type="text" value="${item.date || ''}" data-index="${index}" data-key="date"></td>
-                <td><input type="text" value="${item.debit_account || ''}" data-index="${index}" data-key="debit_account"></td>
-                <td><input type="text" value="${item.credit_account || ''}" data-index="${index}" data-key="credit_account"></td>
+                <td><input type="date" value="${item.date || ''}" data-index="${index}" data-key="date" style="width:110px;"></td>
+                <td><input type="text" list="account-datalist" value="${item.debit_account || ''}" data-index="${index}" data-key="debit_account" placeholder="借方科目"></td>
+                <td><input type="text" list="account-datalist" value="${item.credit_account || ''}" data-index="${index}" data-key="credit_account" placeholder="貸方科目"></td>
                 <td><input type="number" value="${item.amount || 0}" data-index="${index}" data-key="amount"></td>
-                <td><input type="text" value="${item.counterparty || ''}" data-index="${index}" data-key="counterparty"></td>
-                <td><input type="text" value="${item.memo || ''}" data-index="${index}" data-key="memo"></td>
+                <td><input type="text" value="${item.counterparty || ''}" data-index="${index}" data-key="counterparty" placeholder="取引先"></td>
+                <td><input type="text" value="${item.memo || ''}" data-index="${index}" data-key="memo" placeholder="摘要"></td>
+                <td>
+                    <button class="delete-row-btn" data-index="${index}" style="background:none; border:none; color:#f66; cursor:pointer;">×</button>
+                </td>
             `;
             resultsTable.appendChild(row);
         });
@@ -204,6 +264,14 @@ document.addEventListener('DOMContentLoaded', () => {
         resultsTable.querySelectorAll('input').forEach(input => {
             input.addEventListener('change', (e) => {
                 extractedData[e.target.dataset.index][e.target.dataset.key] = e.target.value;
+            });
+        });
+
+        resultsTable.querySelectorAll('.delete-row-btn').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                const idx = parseInt(e.target.dataset.index);
+                extractedData.splice(idx, 1);
+                renderResults(extractedData);
             });
         });
     }
