@@ -432,16 +432,32 @@ def save_to_sheets(data, spreadsheet_id, access_token):
             ws_gl = sh.worksheet("総勘定元帳")
         except:
             ws_gl = sh.add_worksheet(title="総勘定元帳", rows="1000", cols="8")
-            ws_gl.update("A1", [["科目選択:", "現金", "←プルダウンで選択"]])
+
+        # Force Setup (Always run this to fix broken/empty sheets)
+        # Note: update() calls are cheap enough to run on save.
+        try:
+            val_chk = ws_gl.acell('A1').value
+            if val_chk != "科目選択:":
+                 ws_gl.update("A1", [["科目選択:", "現金", "←プルダウンで選択"]])
+        except:
+             ws_gl.update("A1", [["科目選択:", "現金", "←プルダウンで選択"]])
+
+        try:
             rule_gl = gspread.utils.ValidationCondition("ONE_OF_RANGE", ["=勘定科目マスタ!$A$2:$A$100"])
             ws_gl.set_data_validation("B1", rule_gl)
+        except Exception as e:
+            print(f"GL Validation Error: {e}")
             
-            ws_gl.update("A3", [["日付", "借方", "貸方", "金額", "摘要", "借/貸判定", "残高"]])
+        ws_gl.update("A3", [["日付", "借方", "貸方", "金額(税込)", "摘要", "借/貸判定", "残高"]]) # Updated header too
             
-            # Update GL Query Formula for new column order
-            # Data: Date(1), Db(2), Cr(3), Amt(4), Tax(5), Cp(6), Memo(7), URL(8)
-            # GL View: Date, Db, Cr, Amt, Memo(7)
-            ws_gl.update_acell("A4", "=IF(B1=\"\",\"科目をB1で選択してください\", QUERY({'仕訳明細'!A2:H; '仕訳明細（手入力）'!A2:H}, \"select Col1, Col2, Col3, Col4, Col7 where Col2 = '\"&B1&\"' or Col3 = '\"&B1&\"' order by Col1 asc\", 0))")
+        # Update GL Query Formula 
+        # Data: Date(1), Db(2), Cr(3), Amt(4), Tax(5), Cp(6), Memo(7), URL(8)
+        # GL View: Date, Db, Cr, Amt, Memo(7)
+        # Note: We need a complex query to determine Debit/Credit sign. 
+        # Simple Query: Select Col1, Col2, Col3, Col4, Col7 ...
+        # Calculating 'Balance' in Query is hard.
+        # Let's just output the raw transactions matched.
+        ws_gl.update_acell("A4", "=IF(B1=\"\",\"科目をB1で選択してください\", QUERY({'仕訳明細'!A2:H; '仕訳明細（手入力）'!A2:H}, \"select Col1, Col2, Col3, Col4, Col7 where Col2 = '\"&B1&\"' or Col3 = '\"&B1&\"' order by Col1 asc\", 0))")
             
         return True
     except Exception as e:
