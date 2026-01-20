@@ -230,6 +230,37 @@ document.addEventListener('DOMContentLoaded', () => {
         }, 100);
     });
 
+    // --- New: Start Manual Entry from Landing ---
+    const startManualBtn = document.getElementById('start-manual-btn');
+    if (startManualBtn) {
+        startManualBtn.addEventListener('click', () => {
+            fetchAccounts(); // Ensure accounts are loaded
+
+            // Hide drop zone, show results
+            dropZone.classList.add('hidden');
+            resultsArea.classList.remove('hidden');
+
+            // Add initial empty row
+            const newItem = {
+                date: new Date().toISOString().split('T')[0],
+                debit_account: '',
+                credit_account: '',
+                amount: 0,
+                counterparty: '',
+                memo: '',
+                source: 'manual'
+            };
+            extractedData = [newItem];
+            renderResults(extractedData);
+
+            // Focus
+            setTimeout(() => {
+                const inputs = resultsTable.querySelectorAll('input');
+                if (inputs.length > 0) inputs[0].focus();
+            }, 100);
+        });
+    }
+
     function renderResults(data) {
         resultsTable.innerHTML = '';
         let hasDuplicate = false;
