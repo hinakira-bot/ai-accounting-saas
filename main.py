@@ -370,6 +370,238 @@ def save_to_sheets(data, spreadsheet_id, access_token):
                 return False
 
         # --- Reporting & Views (Fail-Soft) ---
+        # Wraps secondary updates in try-except so core save succeeds even if views fail.
+        try: 
+            # 5. Advanced PL & BS Formulas
+            
+            # P/L Sheet
+            try:
+                sheet_pl = sh.worksheet("損益計算書")
+            except:
+                sheet_pl = sh.add_worksheet(title="損益計算書", rows="100", cols="10")
+                
+            sheet_pl.clear()
+            sheet_pl.update("A1", [["損益計算書 (P/L)"]])
+            sheet_pl.update("A3", [["【経費 (借方)】", "金額", "", "【売上 (貸方)】", "金額"]])
+            
+            bs_items_list = "'現金|小口現金|普通預金|売掛金|未収入金|棚卸資産|買掛金|未払金|借入金|預り金|資本金|元入金|事業主貸|事業主借'"
+            
+            f_debit = f"=QUERY({{'仕訳明細'!A2:H; '仕訳明細（手入力）'!A2:H}}, \"select Col2, sum(Col4) where Col2 is not null and not Col2 matches {bs_items_list} group by Col2 label sum(Col4) ''\", 0)"
+            sheet_pl.update_acell("A4", f_debit)
+            
+            f_credit = f"=QUERY({{'仕訳明細'!A2:H; '仕訳明細（手入力）'!A2:H}}, \"select Col3, sum(Col4) where Col3 is not null and not Col3 matches {bs_items_list} group by Col3 label sum(Col4) ''\", 0)"
+            sheet_pl.update_acell("D4", f_credit)
+
+            # B/S Sheet
+            try:
+                sheet_bs = sh.worksheet("貸借対照表")
+            except:
+                sheet_bs = sh.add_worksheet(title="貸借対照表", rows="100", cols="6")
+            
+            sheet_bs.clear()
+            sheet_bs.update("A1", [["貸借対照表 (B/S)"]])
+            sheet_bs.update("A2", [["※期首残高 ＋ (借方合計 - 貸方合計) で算出"]])
+            
+            assets, liabilities, equity = [], [], []
+            for row in DEFAULT_ACCOUNTS[1:]:
+                name, type_ = row[0], row[1]
+                if type_ == "資産": assets.append(name)
+                elif type_ == "負債": liabilities.append(name)
+                elif type_ == "純資産": equity.append(name)
+                
+            bs_rows = []
+            bs_rows.append(["【資産の部】", "金額"])
+            for acc in assets:
+                f = f"=SUMIF('期首残高'!A:A, \"{acc}\", '期首残高'!B:B) + (SUMIF('仕訳明細'!B:B, \"{acc}\", '仕訳明細'!D:D) + SUMIF('仕訳明細（手入力）'!B:B, \"{acc}\", '仕訳明細（手入力）'!D:D)) - (SUMIF('仕訳明細'!C:C, \"{acc}\", '仕訳明細'!D:D) + SUMIF('仕訳明細（手入力）'!C:C, \"{acc}\", '仕訳明細（手入力）'!D:D))"
+                bs_rows.append([acc, f])
+            bs_rows.append(["", ""])
+            bs_rows.append(["【負債の部】", "金額"])
+            for acc in liabilities:
+                f = f"=SUMIF('期首残高'!A:A, \"{acc}\", '期首残高'!B:B) + (SUMIF('仕訳明細'!C:C, \"{acc}\", '仕訳明細'!D:D) + SUMIF('仕訳明細（手入力）'!C:C, \"{acc}\", '仕訳明細（手入力）'!D:D)) - (SUMIF('仕訳明細'!B:B, \"{acc}\", '仕訳明細'!D:D) + SUMIF('仕訳明細（手入力）'!B:B, \"{acc}\", '仕訳明細（手入力）'!D:D))"
+                bs_rows.append([acc, f])
+            bs_rows.append(["", ""])
+            bs_rows.append(["【純資産の部】", "金額"])
+            for acc in equity:
+                f = f"=SUMIF('期首残高'!A:A, \"{acc}\", '期首残高'!B:B) + (SUMIF('仕訳明細'!C:C, \"{acc}\", '仕訳明細'!D:D) + SUMIF('仕訳明細（手入力）'!C:C, \"{acc}\", '仕訳明細（手入力）'!D:D)) - (SUMIF('仕訳明細'!B:B, \"{acc}\", '仕訳明細'!D:D) + SUMIF('仕訳明細（手入力）'!B:B, \"{acc}\", '仕訳明細（手入力）'!D:D))"
+                bs_rows.append([acc, f])
+            sheet_bs.update(f"A3:B{3+len(bs_rows)}", bs_rows, value_input_option='USER_ENTERED')
+            
+        except Exception as e:
+            print(f"Reporting Logic Error (Non-Critical): {e}")
+
+        # 6. General Ledger (Safer Update Logic)
+        try:
+            try:
+                ws_gl = sh.worksheet("総勘定元帳")
+                ws_gl.clear() # Clear is safer than Delete/Add
+            except:
+                ws_gl = sh.add_worksheet(title="総勘定元帳", rows="1000", cols="8")
+
+            ws_gl.update("A1", [["科目選択:", "現金", "←プルダウンで選択"]])
+            ws_gl.update("B1", "現金")
+            ws_gl.update("A3", [["日付", "借方", "貸方", "金額(税込)", "摘要", "借/貸判定", "残高"]])
+
+            try:
+                rule_gl = gspread.utils.ValidationCondition("ONE_OF_RANGE", ["=勘定科目マスタ!$A$2:$A$100"])
+                ws_gl.set_data_validation("B1", rule_gl)
+            except Exception as e:
+                print(f"GL Validation Error: {e}")
+            
+            ws_gl.update_acell("A4", "=IF(B1=\"\",\"科目をB1で選択してください\", QUERY({'仕訳明細'!A2:H; '仕訳明細（手入力）'!A2:H}, \"select Col1, Col2, Col3, Col4, Col7 where Col2 = '\"&B1&\"' or Col3 = '\"&B1&\"' order by Col1 asc\", 0))")
+        except Exception as e:
+             print(f"GL Setup Error (Non-Critical): {e}")
+
+        # 7. Monthly Trial Balance (月次推移表)
+        try:
+             try:
+                 ws_monthly = sh.worksheet("月次推移表")
+                 ws_monthly.clear()
+             except:
+                 ws_monthly = sh.add_worksheet(title="月次推移表", rows="100", cols="14") # Acc + 12 months + Total
+            
+             # Header
+             months = ["4月", "5月", "6月", "7月", "8月", "9月", "10月", "11月", "12月", "1月", "2月", "3月"]
+             header = ["勘定科目"] + months + ["合計"]
+             ws_monthly.update("A1", [header])
+             
+             # Rows
+             ac_names = [row[0] for row in DEFAULT_ACCOUNTS[1:]] # Skip header
+             m_data = []
+             
+             for ac in ac_names:
+                 m_data.append([ac])
+             
+             ws_monthly.update(f"A2:A{1+len(m_data)}", m_data)
+             
+             # Simplified Monthly Summary (Debit)
+             q = "=QUERY({'仕訳明細'!A2:H; '仕訳明細（手入力）'!A2:H}, \"select Col2, sum(Col4) where Col2 is not null group by Col2 pivot month(Col1)+1\", 0)"
+             ws_monthly.update_acell("E1", "※経費・資産の月次推移 (借方集計)")
+             ws_monthly.update_acell("E2", q)
+             
+        except Exception as e:
+            print(f"Monthly Report Error: {e}")
+            
+        return True
+    except Exception as e:
+        print(f"Fatal Save Error: {e}")
+        return False
+    print(f"Saving {len(data)} items to sheets...")
+    try:
+        client = get_gspread_client(access_token)
+        if not client: return False
+        sh = client.open_by_key(spreadsheet_id)
+        
+        # 1. Ensure "勘定科目マスタ" exists
+        try:
+            sh.worksheet("勘定科目マスタ")
+        except:
+            ws_master = sh.add_worksheet(title="勘定科目マスタ", rows="100", cols="2")
+            ws_master.update("A1", DEFAULT_ACCOUNTS)
+            ws_master.hide() # Hide it to keep UI clean
+            
+        # 2. Ensure "期首残高" exists
+        try:
+            sh.worksheet("期首残高")
+        except:
+            ws_open = sh.add_worksheet(title="期首残高", rows="50", cols="3")
+            ws_open.update("A1", [["勘定科目", "期首残高金額", "備考"]])
+            # Default helpful rows
+            ws_open.update("A2", [["現金", "0", ""], ["普通預金", "0", ""], ["資本金", "0", ""], ["元入金", "0", ""]])
+
+        # 3. Setup Detail Sheets
+        # Requested Order: Date, Debit, Credit, Amount, Tax, Counterparty, Memo, URL
+        headers = ["日にち", "借方", "貸方", "金額(税込)", "消費税額", "取引先", "摘要", "証憑URL"]
+        
+        # Helper to init sheet with dropdowns
+        def init_detail_sheet(name):
+            try:
+                ws = sh.worksheet(name)
+            except:
+                ws = sh.add_worksheet(title=name, rows="1000", cols="8")
+            
+            vals = ws.get_all_values()
+            if not vals:
+                ws.append_row(headers)
+                ws.freeze(rows=1)
+                
+            # SAFETY: Ensure at least 8 columns exist for the new layout/Query
+            try:
+                if ws.col_count < 8:
+                    ws.resize(cols=8)
+            except: pass
+
+            try:
+                rule = gspread.utils.ValidationCondition(
+                    "ONE_OF_RANGE",
+                    ["=勘定科目マスタ!$A$2:$A$100"]
+                )
+                ws.set_data_validation("B2:B1000", rule)
+                ws.set_data_validation("C2:C1000", rule)
+            except Exception as ex:
+                print(f"Validation Error (Ignored): {ex}")
+            return ws
+
+        sheet_auto = init_detail_sheet("仕訳明細")
+        sheet_manual = init_detail_sheet("仕訳明細（手入力）")
+
+        # --- Data Sanitization (Validation Safety) ---
+        valid_accounts = set([row[0] for row in DEFAULT_ACCOUNTS[1:]])
+        
+        sanitized_data = []
+        for item in data:
+            d_acc = item.get('debit_account', '').strip()
+            if d_acc not in valid_accounts and d_acc != "": d_acc = "雑費"
+            c_acc = item.get('credit_account', '').strip()
+            if c_acc not in valid_accounts and c_acc != "": c_acc = "雑費"
+            
+            # Clean Amount (remove commas, yen sign, ensure int)
+            raw_amt = str(item.get('amount', 0)).replace(',', '').replace('¥', '').replace('円', '').strip()
+            try:
+                clean_amt = int(float(raw_amt)) # float first to handle '1000.0'
+            except:
+                clean_amt = 0
+
+            item['debit_account'] = d_acc
+            item['credit_account'] = c_acc
+            item['amount'] = clean_amt
+            sanitized_data.append(item)
+
+        # 4. Save Data (CORE OPERATION - Must Succeed)
+        rows_auto = []
+        rows_manual = []
+        
+        for item in sanitized_data:
+            row = [
+                str(item.get('date', '')),
+                str(item.get('debit_account', '')),
+                str(item.get('credit_account', '')),
+                item.get('amount', 0),
+                item.get('tax_amount', 0),
+                str(item.get('counterparty', '')),
+                str(item.get('memo', '')),
+                item.get('evidence_url', '')
+            ]
+            # Route based on source flag
+            if item.get('source') == 'manual':
+                rows_manual.append(row)
+            else:
+                rows_auto.append(row)
+                
+        if rows_auto:
+            try:
+                sheet_auto.append_rows(rows_auto, value_input_option='USER_ENTERED')
+            except Exception as e:
+                print(f"Error appending auto rows: {e}")
+                return False
+                
+        if rows_manual:
+            try:
+                sheet_manual.append_rows(rows_manual, value_input_option='USER_ENTERED')
+            except Exception as e:
+                print(f"Error appending manual rows: {e}")
+                return False
+
+        # --- Reporting & Views (Fail-Soft) ---
         try: 
             # 5. Advanced PL & BS Formulas
             
@@ -562,6 +794,9 @@ def save_to_sheets(data, spreadsheet_id, access_token):
             print(f"Monthly Report Error: {e}")
 
         return True
+    except Exception as e:
+        print(f"Fatal Save Error: {e}")
+        return False
 
 # --- Routes ---
 @app.route('/')
