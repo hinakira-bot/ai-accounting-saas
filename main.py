@@ -921,6 +921,15 @@ def api_predict():
         response = model.generate_content(prompt)
         content = CleanJSON(response.text)
         predictions = json.loads(content)
+        
+        # Enforce user overrides (Programmatic Safety Net)
+        # If user provided a specific debit/credit, correct the AI if it hallucinated/changed it.
+        for pred in predictions:
+            original = next((item for item in data if item['index'] == pred['index']), None)
+            if original:
+                if original.get('debit'): pred['debit'] = original['debit']
+                if original.get('credit'): pred['credit'] = original['credit']
+        
         return jsonify(predictions)
     except Exception as e:
         print(f"Prediction Error: {e}")
