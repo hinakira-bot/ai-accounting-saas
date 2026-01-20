@@ -209,11 +209,18 @@ document.addEventListener('DOMContentLoaded', () => {
         // Fetch accounts if not yet done (lazy load)
         fetchAccounts();
 
-        // Add empty row
+        // Check Payment Type Selector
+        const paymentSelect = document.getElementById('manual-payment-type');
+        let creditAcc = '';
+        if (paymentSelect && paymentSelect.value) {
+            creditAcc = paymentSelect.value;
+        }
+
+        // Add row with optional pre-filled credit account
         const newItem = {
             date: new Date().toISOString().split('T')[0], // Today
             debit_account: '',
-            credit_account: '',
+            credit_account: creditAcc,
             amount: 0,
             counterparty: '',
             memo: '',
@@ -311,12 +318,13 @@ document.addEventListener('DOMContentLoaded', () => {
     const autoPredictBtn = document.getElementById('auto-predict-btn');
     if (autoPredictBtn) {
         autoPredictBtn.addEventListener('click', () => {
-            // 1. Find targets (Empty Accounts + Filled Counterparty/Memo)
+            // 1. Find targets (Legacy: Both empty OR New: One Empty)
+            // We want rows where at least one account is empty, AND prompt info is available.
             const targets = extractedData.map((item, idx) => ({ ...item, index: idx }))
-                .filter(item => (!item.debit_account && !item.credit_account) && (item.counterparty || item.memo));
+                .filter(item => (!item.debit_account || !item.credit_account) && (item.counterparty || item.memo));
 
             if (targets.length === 0) {
-                alert("自動判定できる行がありません。（取引先か摘要を入力し、科目を空欄にしてください）");
+                alert("自動判定できる行がありません。（取引先か摘要を入力し、科目の片方または両方を空欄にしてください）");
                 return;
             }
 
@@ -335,7 +343,14 @@ document.addEventListener('DOMContentLoaded', () => {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                    data: targets.map(t => ({ index: t.index, counterparty: t.counterparty, memo: t.memo })),
+                    // Send existing debit/credit so backend can respect them
+                    data: targets.map(t => ({
+                        index: t.index,
+                        counterparty: t.counterparty,
+                        memo: t.memo,
+                        debit: t.debit_account,
+                        credit: t.credit_account
+                    })),
                     gemini_api_key: apiKey,
                     spreadsheet_id: sheetId,
                     access_token: accessToken

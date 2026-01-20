@@ -874,7 +874,13 @@ def api_predict():
     valid_accounts_str = ", ".join([f"{row[0]}" for row in DEFAULT_ACCOUNTS[1:]])
     
     # Format input
-    input_text = "\n".join([f"ID:{item['index']} 取引先:{item['counterparty']} 摘要:{item['memo']}" for item in data])
+    # Include existing debit/credit if provided
+    input_text = ""
+    for item in data:
+        line = f"ID:{item['index']} 取引先:{item.get('counterparty', '')} 摘要:{item.get('memo', '')}"
+        if item.get('debit'): line += f" 【借方指定:{item['debit']}】"
+        if item.get('credit'): line += f" 【貸方指定:{item['credit']}】"
+        input_text += line + "\n"
 
     prompt = f"""
     あなたは優秀な日本の公認会計士です。
@@ -885,6 +891,7 @@ def api_predict():
     ※必ずこのリストの中から選択してください。
     
     【推論ルール】
+    0. **ユーザー指定の考慮:** 入力データに【借方指定:...】や【貸方指定:...】がある場合は、その指定を**絶対に変更せず**、そのまま出力に含めてください。空欄の片方だけを推測してください。
     1. **過去の学習データ**と同じ取引先があれば、その科目を優先してください。
     2. 過去データにない場合、**取引先名や摘要のニュアンス**から、一般的な会計知識に基づいて推測してください。
        - 例: 飲食店 → 会議費(商談) または 接待交際費
