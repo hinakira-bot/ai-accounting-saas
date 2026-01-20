@@ -305,6 +305,12 @@ td input:focus {
     border: 1px solid var(--glass-border);
 }
 
+.secondary-btn option {
+    background-color: var(--bg-dark);
+    /* Ensure background is dark if text is light */
+    color: var(--text-main);
+}
+
 .secondary-btn:hover {
     background: rgba(255, 255, 255, 0.1);
 }

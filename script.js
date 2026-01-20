@@ -240,7 +240,9 @@ document.addEventListener('DOMContentLoaded', () => {
     // --- New: Start Manual Entry from Landing ---
     const startManualBtn = document.getElementById('start-manual-btn');
     if (startManualBtn) {
-        startManualBtn.addEventListener('click', () => {
+        startManualBtn.addEventListener('click', (e) => {
+            e.stopPropagation(); // Prevent dropZone file picker
+            e.preventDefault();
             fetchAccounts(); // Ensure accounts are loaded
 
             // Hide drop zone, show results
