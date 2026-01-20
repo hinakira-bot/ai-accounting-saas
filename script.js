@@ -210,11 +210,9 @@ document.addEventListener('DOMContentLoaded', () => {
         fetchAccounts();
 
         // Check Payment Type Selector
-        const paymentSelect = document.getElementById('manual-payment-type');
+        // (Removed in favor of Split Button Auto-Detect)
         let creditAcc = '';
-        if (paymentSelect && paymentSelect.value) {
-            creditAcc = paymentSelect.value;
-        }
+
 
         // Add row with optional pre-filled credit account
         const newItem = {
@@ -316,87 +314,122 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
-    // --- Auto Predict Logic ---
-    // --- Auto Predict Logic ---
-    const autoPredictBtn = document.getElementById('auto-predict-btn');
-    if (autoPredictBtn) {
-        autoPredictBtn.addEventListener('click', () => {
-            // FORCE SYNC: Update extractedData from DOM
-            const inputs = resultsTable.querySelectorAll('input');
-            inputs.forEach(input => {
-                const idx = parseInt(input.dataset.index);
-                const key = input.dataset.key;
-                if (!isNaN(idx) && key && extractedData[idx]) {
-                    extractedData[idx][key] = input.value;
-                }
+    // --- Dropdown Menu Logic ---
+    const menuBtn = document.getElementById('auto-predict-menu-btn');
+    const dropdown = document.getElementById('auto-predict-dropdown');
+
+    if (menuBtn && dropdown) {
+        menuBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            dropdown.style.display = dropdown.style.display === 'block' ? 'none' : 'block';
+        });
+
+        // Close dropdown when clicking outside
+        document.addEventListener('click', () => {
+            dropdown.style.display = 'none';
+        });
+
+        // Handle Menu Item Clicks
+        dropdown.querySelectorAll('a').forEach(link => {
+            link.addEventListener('click', (e) => {
+                e.preventDefault();
+                const mode = e.target.dataset.mode; // unpaid, cash, bank, auto
+                runAutoPredict(mode);
             });
-
-            // 1. Find targets (Legacy: Both empty OR New: One Empty)
-            // We want rows where at least one account is empty, AND prompt info is available.
-            const targets = extractedData.map((item, idx) => ({ ...item, index: idx }))
-                .filter(item => (!item.debit_account || !item.credit_account) && (item.counterparty || item.memo));
-
-            if (targets.length === 0) {
-                alert("自動判定できる行がありません。（取引先か摘要を入力し、科目の片方または両方を空欄にしてください）");
-                return;
-            }
-
-            const apiKey = localStorage.getItem('gemini_api_key');
-            const sheetId = localStorage.getItem('spreadsheet_id');
-
-            if (!apiKey || !sheetId) {
-                alert("設定（APIキー・シートID）が不足しています。");
-                return;
-            }
-
-            autoPredictBtn.disabled = true;
-            autoPredictBtn.textContent = '判定中...';
-
-            fetch('/api/predict', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    // Send existing debit/credit so backend can respect them
-                    data: targets.map(t => ({
-                        index: t.index,
-                        counterparty: t.counterparty,
-                        memo: t.memo,
-                        debit: t.debit_account,
-                        credit: t.credit_account
-                    })),
-                    gemini_api_key: apiKey,
-                    spreadsheet_id: sheetId,
-                    access_token: accessToken
-                })
-            })
-                .then(res => res.json())
-                .then(predictions => {
-                    if (predictions.error) throw new Error(predictions.error);
-
-                    let count = 0;
-                    predictions.forEach(p => {
-                        const targetRow = extractedData[p.index];
-                        if (targetRow) {
-                            // Frontend Safety Net: Only overwrite if currently empty
-                            if (p.debit && !targetRow.debit_account) targetRow.debit_account = p.debit;
-                            if (p.credit && !targetRow.credit_account) targetRow.credit_account = p.credit;
-                            count++;
-                        }
-                    });
-
-                    renderResults(extractedData);
-                    alert(`${count}件の科目を判定しました！`);
-                })
-                .catch(err => {
-                    console.error(err);
-                    alert(`エラー: ${err.message}`);
-                })
-                .finally(() => {
-                    autoPredictBtn.disabled = false;
-                    autoPredictBtn.textContent = '✨ 科目を自動判定';
-                });
         });
     }
+
+    function runAutoPredict(mode) {
+        // FORCE SYNC (Keep this robust logic)
+        const inputs = resultsTable.querySelectorAll('input');
+        inputs.forEach(input => {
+            const idx = parseInt(input.dataset.index);
+            const key = input.dataset.key;
+            if (!isNaN(idx) && key && extractedData[idx]) extractedData[idx][key] = input.value;
+        });
+
+        // 1. Pre-fill Credit Account based on Mode (Local Override)
+        let forcedCredit = null;
+        if (mode === 'unpaid') forcedCredit = '未払金';
+        if (mode === 'cash') forcedCredit = '現金';
+        if (mode === 'bank') forcedCredit = '普通預金';
+
+        // 2. Find Targets
+        // If mode is specific (e.g. Cash), we target rows where Credit is Empty OR matches target (to refine) and Debit is Empty.
+        // Actually, simpler: Target rows where Debit is Empty. And set Credit to forced value if empty or different?
+        // Let's stick to safe logic: Target rows with missing accounts.
+
+        const targets = extractedData.map((item, idx) => ({ ...item, index: idx }))
+            .filter(item => (!item.debit_account || !item.credit_account) && (item.counterparty || item.memo));
+
+        if (targets.length === 0) {
+            alert("自動判定できる行がありません。");
+            return;
+        }
+
+        // Apply Forced Credit locally BEFORE sending
+        if (forcedCredit) {
+            targets.forEach(t => {
+                // If credit is empty, fill it. 
+                // Determine if we should overwrite existing? User said "Predict as Cash".
+                // Let's safe-overwrite: If currently empty, fill it.
+                if (!extractedData[t.index].credit_account) {
+                    extractedData[t.index].credit_account = forcedCredit;
+                    t.credit_account = forcedCredit; // Update target object for API
+                }
+            });
+            // Re-render to show "Cash" immediately? Maybe better to wait for full result.
+        }
+
+        const apiKey = localStorage.getItem('gemini_api_key');
+        const sheetId = localStorage.getItem('spreadsheet_id');
+        if (!apiKey || !sheetId) { alert("設定不足です"); return; }
+
+        menuBtn.textContent = '判定中...';
+        menuBtn.disabled = true;
+
+        fetch('/api/predict', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                data: targets.map(t => ({
+                    index: t.index,
+                    counterparty: t.counterparty,
+                    memo: t.memo,
+                    debit: t.debit_account,
+                    credit: t.credit_account
+                })),
+                gemini_api_key: apiKey,
+                spreadsheet_id: sheetId,
+                access_token: accessToken
+            })
+        })
+            .then(res => res.json())
+            .then(predictions => {
+                if (predictions.error) throw new Error(predictions.error);
+                let count = 0;
+                predictions.forEach(p => {
+                    const targetRow = extractedData[p.index];
+                    if (targetRow) {
+                        if (p.debit && !targetRow.debit_account) targetRow.debit_account = p.debit;
+                        if (p.credit && !targetRow.credit_account) targetRow.credit_account = p.credit;
+                        count++;
+                    }
+                });
+                renderResults(extractedData);
+                alert(`${count}件の科目を判定しました！`);
+            })
+            .catch(err => {
+                console.error(err);
+                alert(`エラー: ${err.message}`);
+            })
+            .finally(() => {
+                menuBtn.disabled = false;
+                menuBtn.textContent = '✨ 科目を自動判定 ▼';
+            });
+    }
+
+
 
     sendBtn.addEventListener('click', () => {
         const apiKey = localStorage.getItem('gemini_api_key');

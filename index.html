@@ -90,18 +90,31 @@
                     </div>
                     <div class="actions">
                         <button id="add-more-btn" class="secondary-btn">ファイルを追加</button>
-                        <select id="manual-payment-type" class="secondary-btn"
-                            style="background: rgba(255, 255, 255, 0.1); border: 1px solid rgba(255, 255, 255, 0.2); margin-right: 5px;">
-                            <option value="">支払方法を選択 (任意)</option>
-                            <option value="未払金">未払金 (クレジットカード等)</option>
-                            <option value="現金">現金</option>
-                            <option value="普通預金">普通預金</option>
-                        </select>
                         <button id="add-manual-btn" class="secondary-btn"
                             style="background: rgba(255, 255, 255, 0.1);">＋手入力行を追加</button>
-                        <button id="auto-predict-btn" class="secondary-btn" title="取引先と摘要から科目を推測します"
-                            style="background: rgba(100, 200, 255, 0.2); border: 1px solid rgba(100, 200, 255, 0.5); color: #d0eaff;">✨
-                            科目を自動判定</button>
+
+                        <!-- Auto-Detect Dropdown -->
+                        <div class="dropdown" style="position: relative; display: inline-block;">
+                            <button id="auto-predict-menu-btn" class="secondary-btn"
+                                style="background: linear-gradient(135deg, #6366f1 0%, #a855f7 100%); color: white; border: none;">
+                                ✨ 科目を自動判定 ▼
+                            </button>
+                            <div id="auto-predict-dropdown" class="dropdown-content"
+                                style="display: none; position: absolute; right: 0; background-color: #1e293b; min-width: 200px; box-shadow: 0px 8px 16px 0px rgba(0,0,0,0.5); z-index: 1; border-radius: 8px; border: 1px solid rgba(255,255,255,0.1);">
+                                <a href="#" data-mode="unpaid"
+                                    style="color: white; padding: 12px 16px; text-decoration: none; display: block; border-bottom: 1px solid rgba(255,255,255,0.05);">💳
+                                    未払金 (カード等)</a>
+                                <a href="#" data-mode="cash"
+                                    style="color: white; padding: 12px 16px; text-decoration: none; display: block; border-bottom: 1px solid rgba(255,255,255,0.05);">💴
+                                    現金</a>
+                                <a href="#" data-mode="bank"
+                                    style="color: white; padding: 12px 16px; text-decoration: none; display: block; border-bottom: 1px solid rgba(255,255,255,0.05);">🏦
+                                    普通預金</a>
+                                <a href="#" data-mode="auto"
+                                    style="color: #a855f7; padding: 12px 16px; text-decoration: none; display: block;">🤖
+                                    完全自動 (AI)</a>
+                            </div>
+                        </div>
                         <button id="send-btn" class="primary-btn">スプレッドシートに書き込む</button>
                     </div>
                     <div style="text-align: right; margin-top: 10px;">

@@ -408,3 +408,8 @@ footer {
     max-width: 400px;
     padding: 3rem;
 }
+
+/* Dropdown Hover */
+.dropdown-content a:hover {
+    background-color: rgba(255, 255, 255, 0.1);
+}
