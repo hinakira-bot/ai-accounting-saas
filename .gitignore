@@ -19,6 +19,9 @@ list_sheets.py
 test_sheets.py
 test_models_loop.py
 
+# SQLite Database
+data/
+
 # OS
 .DS_Store
 Thumbs.db

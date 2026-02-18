@@ -1,487 +1,708 @@
 document.addEventListener('DOMContentLoaded', () => {
-    // --- Auth & Config ---
+    // ============================================================
+    //  Section 1: Constants & State
+    // ============================================================
     const CLIENT_ID = '353694435064-r6mlbk3mm2mflhl2mot2n94dpuactscc.apps.googleusercontent.com';
     const SCOPES = 'https://www.googleapis.com/auth/spreadsheets https://www.googleapis.com/auth/drive.file';
     let tokenClient;
     let accessToken = sessionStorage.getItem('access_token');
     let tokenExpiration = sessionStorage.getItem('token_expiration');
+    let accounts = [];            // Account master cache
+    let scanResults = [];         // Scan tab working data
 
-    // DOM Elements
+    // ============================================================
+    //  Section 2: DOM References
+    // ============================================================
     const authBtn = document.getElementById('auth-btn');
     const settingsBtn = document.getElementById('settings-btn');
     const settingsModal = document.getElementById('settings-modal');
+    const closeSettings = document.getElementById('close-settings');
     const saveSettingsBtn = document.getElementById('save-settings-btn');
-    const closeModalSpan = document.querySelector('.close-modal');
     const loginOverlay = document.getElementById('login-overlay');
     const overlayLoginBtn = document.getElementById('overlay-login-btn');
+    const tabNav = document.getElementById('tab-nav');
 
-    const dropZone = document.getElementById('drop-zone');
-    const fileInput = document.getElementById('file-input');
-    const statusArea = document.getElementById('status-area');
-    const resultsArea = document.getElementById('results-area');
-    const resultsTable = document.querySelector('#results-table tbody');
-    const sendBtn = document.getElementById('send-btn');
-    const resetBtn = document.getElementById('reset-btn');
-    const addMoreBtn = document.getElementById('add-more-btn');
-    const addMoreInput = document.getElementById('add-more-input');
-
-    let extractedData = [];
-
-    // --- Google Identity Services Initialization ---
+    // ============================================================
+    //  Section 3: Google OAuth
+    // ============================================================
     window.onload = function () {
         if (typeof google === 'undefined') {
-            console.error("Google Identity Services not loaded");
+            console.warn('Google Identity Services not loaded');
             return;
         }
         tokenClient = google.accounts.oauth2.initTokenClient({
             client_id: CLIENT_ID,
             scope: SCOPES,
-            callback: (tokenResponse) => {
-                if (tokenResponse.access_token) {
-                    accessToken = tokenResponse.access_token;
-                    // Token is valid for ~1 hour (3599 seconds)
-                    const expiresIn = tokenResponse.expires_in;
-                    const expirationTime = new Date().getTime() + (expiresIn * 1000);
-
+            callback: (resp) => {
+                if (resp.access_token) {
+                    accessToken = resp.access_token;
+                    const exp = new Date().getTime() + (resp.expires_in * 1000);
                     sessionStorage.setItem('access_token', accessToken);
-                    sessionStorage.setItem('token_expiration', expirationTime);
-
+                    sessionStorage.setItem('token_expiration', exp);
                     onLoginSuccess();
                 }
             },
         });
-
-        // Check if we have a valid token in session
         if (accessToken && tokenExpiration && new Date().getTime() < parseInt(tokenExpiration)) {
             onLoginSuccess();
         } else {
-            loginOverlay.classList.remove('hidden'); // Show login overlay if not logged in
+            loginOverlay.classList.remove('hidden');
         }
-    }
+    };
 
-    function handleLogin() {
-        if (tokenClient) {
-            tokenClient.requestAccessToken();
-        }
-    }
-
-    function onLoginSuccess() {
-        loginOverlay.classList.add('hidden');
-        authBtn.textContent = 'ログアウト';
-        authBtn.onclick = handleLogout;
-        settingsBtn.style.display = 'block';
-
-        // Check local storage for settings
-        const apiKey = localStorage.getItem('gemini_api_key');
-        const sheetId = localStorage.getItem('spreadsheet_id');
-
-        if (!apiKey || !sheetId) {
-            openSettings(); // Prompt user to setup if missing
-        }
-    }
-
+    function handleLogin() { tokenClient && tokenClient.requestAccessToken(); }
     function handleLogout() {
-        const token = sessionStorage.getItem('access_token');
-        if (token) {
-            google.accounts.oauth2.revoke(token, () => { console.log('Revoked'); });
-        }
+        const t = sessionStorage.getItem('access_token');
+        if (t) google.accounts.oauth2.revoke(t, () => {});
         sessionStorage.removeItem('access_token');
         sessionStorage.removeItem('token_expiration');
         location.reload();
     }
+    function onLoginSuccess() {
+        loginOverlay.classList.add('hidden');
+        authBtn.textContent = 'ログアウト';
+        authBtn.onclick = handleLogout;
+        settingsBtn.style.display = '';
+        const apiKey = localStorage.getItem('gemini_api_key');
+        if (!apiKey) openSettings();
+        loadAccounts();
+        loadRecentEntries();
+    }
 
-    // --- Settings Logic ---
+    authBtn.onclick = handleLogin;
+    overlayLoginBtn.onclick = handleLogin;
+
+    // ============================================================
+    //  Section 4: Settings Modal
+    // ============================================================
+    settingsBtn.onclick = openSettings;
+    closeSettings.onclick = () => settingsModal.classList.add('hidden');
+    document.querySelector('.modal-backdrop')?.addEventListener('click', () => settingsModal.classList.add('hidden'));
+    saveSettingsBtn.onclick = () => {
+        const key = document.getElementById('api-key-input').value.trim();
+        const sid = document.getElementById('spreadsheet-id-input').value.trim();
+        if (key) {
+            localStorage.setItem('gemini_api_key', key);
+            if (sid) localStorage.setItem('spreadsheet_id', sid);
+            // Also save to server
+            fetchAPI('/api/settings', 'POST', { gemini_api_key: key, spreadsheet_id: sid });
+            settingsModal.classList.add('hidden');
+            showToast('設定を保存しました');
+        } else {
+            showToast('APIキーを入力してください', true);
+        }
+    };
     function openSettings() {
         document.getElementById('api-key-input').value = localStorage.getItem('gemini_api_key') || '';
         document.getElementById('spreadsheet-id-input').value = localStorage.getItem('spreadsheet_id') || '';
         settingsModal.classList.remove('hidden');
     }
 
-    function saveSettings() {
-        const key = document.getElementById('api-key-input').value.trim();
-        const sheet = document.getElementById('spreadsheet-id-input').value.trim();
+    // ============================================================
+    //  Section 5: Tab Navigation (Hash Router)
+    // ============================================================
+    function switchTab(tabId) {
+        document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+        document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+        const panel = document.getElementById('tab-' + tabId);
+        const btn = document.querySelector(`.tab-btn[data-tab="${tabId}"]`);
+        if (panel) panel.classList.add('active');
+        if (btn) btn.classList.add('active');
+        // Trigger data loading for specific tabs
+        if (tabId === 'journal-book') loadJournalBook();
+        if (tabId === 'trial-balance') loadTrialBalance();
+    }
 
-        if (key && sheet) {
-            localStorage.setItem('gemini_api_key', key);
-            localStorage.setItem('spreadsheet_id', sheet);
-            settingsModal.classList.add('hidden');
-            alert('設定を保存しました');
-        } else {
-            alert('両方の項目を入力してください');
+    tabNav.addEventListener('click', (e) => {
+        const btn = e.target.closest('.tab-btn');
+        if (!btn) return;
+        const tab = btn.dataset.tab;
+        location.hash = tab;
+        switchTab(tab);
+    });
+
+    window.addEventListener('hashchange', () => {
+        const hash = location.hash.replace('#', '') || 'journal-input';
+        switchTab(hash);
+    });
+
+    // Initial tab from hash
+    const initTab = location.hash.replace('#', '') || 'journal-input';
+    switchTab(initTab);
+
+    // ============================================================
+    //  Section 6: Shared Utilities
+    // ============================================================
+    async function fetchAPI(url, method = 'GET', body = null) {
+        const opts = { method, headers: {} };
+        if (body && !(body instanceof FormData)) {
+            opts.headers['Content-Type'] = 'application/json';
+            opts.body = JSON.stringify(body);
+        } else if (body instanceof FormData) {
+            opts.body = body;
         }
+        const res = await fetch(url, opts);
+        return res.json();
     }
 
-    // UI Event Listeners
-    authBtn.onclick = handleLogin;
-    overlayLoginBtn.onclick = handleLogin;
-    settingsBtn.onclick = openSettings;
-    saveSettingsBtn.onclick = saveSettings;
-    closeModalSpan.onclick = () => settingsModal.classList.add('hidden');
-    window.onclick = (event) => {
-        if (event.target == settingsModal) settingsModal.classList.add('hidden');
+    function loadAccounts() {
+        fetchAPI('/api/accounts').then(data => {
+            if (data.accounts) {
+                accounts = data.accounts;
+                populateAccountDatalist();
+                populateJBAccountFilter();
+            }
+        });
     }
 
-    // --- File Handling (Modified for Auth) ---
-    dropZone.addEventListener('dragover', (e) => { e.preventDefault(); dropZone.classList.add('active'); });
-    dropZone.addEventListener('dragleave', () => { dropZone.classList.remove('active'); });
+    function populateAccountDatalist() {
+        const dl = document.getElementById('account-list');
+        if (!dl) return;
+        dl.innerHTML = accounts.map(a => `<option value="${a.name}">`).join('');
+    }
+
+    function populateJBAccountFilter() {
+        const sel = document.getElementById('jb-account');
+        if (!sel) return;
+        sel.innerHTML = '<option value="">全科目</option>' +
+            accounts.map(a => `<option value="${a.id}">${a.name}</option>`).join('');
+    }
+
+    function fmt(n) {
+        return Number(n || 0).toLocaleString();
+    }
+
+    function calcTax(amount, classification) {
+        amount = parseInt(amount) || 0;
+        if (classification === '10%') return Math.floor(amount * 10 / 110);
+        if (classification === '8%') return Math.floor(amount * 8 / 108);
+        return 0;
+    }
+
+    function showToast(msg, isError = false) {
+        let toast = document.getElementById('toast');
+        if (!toast) {
+            toast = document.createElement('div');
+            toast.id = 'toast';
+            toast.className = 'toast';
+            document.body.appendChild(toast);
+        }
+        toast.textContent = msg;
+        toast.className = 'toast show' + (isError ? ' toast-error' : '');
+        setTimeout(() => { toast.className = 'toast'; }, 3000);
+    }
+
+    function todayStr() {
+        return new Date().toISOString().split('T')[0];
+    }
+
+    function fiscalYearDates() {
+        const now = new Date();
+        const y = now.getFullYear();
+        return { start: `${y}-01-01`, end: `${y}-12-31` };
+    }
+
+    // ============================================================
+    //  Section 7: Tab 1 — 仕訳入力 (Journal Entry)
+    // ============================================================
+    const journalForm = document.getElementById('journal-form');
+    const jeDate = document.getElementById('je-date');
+    const jeDebit = document.getElementById('je-debit');
+    const jeCredit = document.getElementById('je-credit');
+    const jeAmount = document.getElementById('je-amount');
+    const jeTax = document.getElementById('je-tax');
+    const jeCounterparty = document.getElementById('je-counterparty');
+    const jeMemo = document.getElementById('je-memo');
+    const jeTaxDisplay = document.getElementById('je-tax-display');
+
+    // Default date to today
+    jeDate.value = todayStr();
+
+    // Tax auto-calculation
+    function updateTaxDisplay() {
+        const amt = parseInt(jeAmount.value) || 0;
+        const cls = jeTax.value;
+        const tax = calcTax(amt, cls);
+        jeTaxDisplay.textContent = fmt(tax) + ' 円';
+    }
+    jeAmount.addEventListener('input', updateTaxDisplay);
+    jeTax.addEventListener('change', updateTaxDisplay);
+
+    // Form submit
+    journalForm.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const entry = {
+            entry_date: jeDate.value,
+            debit_account: jeDebit.value.trim(),
+            credit_account: jeCredit.value.trim(),
+            amount: parseInt(jeAmount.value) || 0,
+            tax_classification: jeTax.value,
+            counterparty: jeCounterparty.value.trim(),
+            memo: jeMemo.value.trim(),
+            source: 'manual',
+        };
+        if (!entry.debit_account || !entry.credit_account || !entry.amount) {
+            showToast('借方科目・貸方科目・金額は必須です', true);
+            return;
+        }
+        try {
+            const res = await fetchAPI('/api/journal', 'POST', entry);
+            if (res.status === 'success') {
+                showToast('仕訳を登録しました');
+                journalForm.reset();
+                jeDate.value = todayStr();
+                jeTaxDisplay.textContent = '0 円';
+                loadRecentEntries();
+            } else {
+                showToast('登録に失敗しました: ' + (res.error || ''), true);
+            }
+        } catch (err) {
+            showToast('通信エラー', true);
+        }
+    });
+
+    // Recent entries below form
+    function loadRecentEntries() {
+        fetchAPI('/api/journal/recent?limit=5').then(data => {
+            const tbody = document.getElementById('recent-tbody');
+            if (!tbody) return;
+            tbody.innerHTML = (data.entries || []).map(e => `
+                <tr>
+                    <td>${e.entry_date || ''}</td>
+                    <td>${e.debit_account || ''}</td>
+                    <td>${e.credit_account || ''}</td>
+                    <td class="text-right">${fmt(e.amount)}</td>
+                    <td>${e.tax_classification || ''}</td>
+                    <td>${e.counterparty || ''}</td>
+                    <td>${e.memo || ''}</td>
+                </tr>
+            `).join('');
+        });
+    }
+
+    // ============================================================
+    //  Section 8: Tab 2 — 証憑読み取り (Document Scanning)
+    // ============================================================
+    const dropZone = document.getElementById('drop-zone');
+    const fileInput = document.getElementById('file-input');
+    const scanStatus = document.getElementById('scan-status');
+    const scanStatusText = document.getElementById('scan-status-text');
+    const scanResultsCard = document.getElementById('scan-results');
+    const scanTbody = document.getElementById('scan-tbody');
+    const scanSaveBtn = document.getElementById('scan-save');
+    const scanAddFile = document.getElementById('scan-add-file');
+    const scanAddInput = document.getElementById('scan-add-input');
+    const scanDupAlert = document.getElementById('scan-duplicate-alert');
+
+    dropZone.addEventListener('dragover', (e) => { e.preventDefault(); dropZone.classList.add('drag-over'); });
+    dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'));
     dropZone.addEventListener('drop', (e) => {
         e.preventDefault();
-        dropZone.classList.remove('active');
-        handleFiles(e.dataTransfer.files);
+        dropZone.classList.remove('drag-over');
+        handleScanFiles(e.dataTransfer.files);
     });
     dropZone.addEventListener('click', () => fileInput.click());
-    fileInput.addEventListener('change', () => handleFiles(fileInput.files));
-    addMoreBtn.addEventListener('click', () => addMoreInput.click());
-    addMoreInput.addEventListener('change', () => handleFiles(addMoreInput.files, true));
+    fileInput.addEventListener('change', () => { handleScanFiles(fileInput.files); fileInput.value = ''; });
+    scanAddFile.addEventListener('click', () => scanAddInput.click());
+    scanAddInput.addEventListener('change', () => { handleScanFiles(scanAddInput.files, true); scanAddInput.value = ''; });
 
-    function handleFiles(files, append = false) {
-        if (files.length === 0) return;
-
+    async function handleScanFiles(files, append = false) {
+        if (!files.length) return;
         const apiKey = localStorage.getItem('gemini_api_key');
-        const sheetId = localStorage.getItem('spreadsheet_id');
+        if (!apiKey) { showToast('設定画面でAPIキーを設定してください', true); openSettings(); return; }
 
-        if (!apiKey || !sheetId) {
-            alert('設定画面でAPIキーとスプレッドシートIDを設定してください。');
-            openSettings();
-            return;
-        }
-
-        if (!append) dropZone.classList.add('hidden');
-        statusArea.classList.remove('hidden');
-        document.getElementById('status-text').textContent = `${files.length}枚のファイルを解析中...`;
+        scanStatus.classList.remove('hidden');
+        scanStatusText.textContent = `${files.length}件のファイルをAIで解析中...`;
 
         const formData = new FormData();
-        for (let i = 0; i < files.length; i++) {
-            formData.append('files', files[i]);
-        }
-
-        // Append Config
+        for (let f of files) formData.append('files', f);
         formData.append('gemini_api_key', apiKey);
-        formData.append('spreadsheet_id', sheetId);
-        formData.append('access_token', accessToken); // Add OAuth token
+        if (accessToken) formData.append('access_token', accessToken);
 
-        fetch('/api/analyze', {
-            method: 'POST',
-            body: formData
-        })
-            .then(response => response.json())
-            .then(data => {
-                if (data.error) throw new Error(data.error);
-                extractedData = append ? [...extractedData, ...data] : data;
-                renderResults(extractedData);
-                statusArea.classList.add('hidden');
-                resultsArea.classList.remove('hidden');
-            })
-            .catch(err => {
-                console.error(err);
-                alert(`エラー: ${err.message}`);
-                statusArea.classList.add('hidden');
-                if (!append && extractedData.length === 0) dropZone.classList.remove('hidden');
-            });
-    }
-
-    const addManualBtn = document.getElementById('add-manual-btn');
-    let accountOptions = [];
-
-    // --- Fetch Accounts for Autocomplete ---
-    function fetchAccounts() {
-        if (accountOptions.length > 0) return;
-        fetch('/api/accounts')
-            .then(res => res.json())
-            .then(data => {
-                if (data.accounts) accountOptions = data.accounts;
-                setupDatalist();
-            })
-            .catch(err => console.error("Account fetch failed", err));
-    }
-
-    function setupDatalist() {
-        let dl = document.getElementById('account-datalist');
-        if (!dl) {
-            dl = document.createElement('datalist');
-            dl.id = 'account-datalist';
-            document.body.appendChild(dl);
+        try {
+            const data = await fetchAPI('/api/analyze', 'POST', formData);
+            if (data.error) throw new Error(data.error);
+            scanResults = append ? [...scanResults, ...data] : data;
+            renderScanResults();
+            scanStatus.classList.add('hidden');
+            scanResultsCard.classList.remove('hidden');
+        } catch (err) {
+            scanStatus.classList.add('hidden');
+            showToast('解析エラー: ' + err.message, true);
         }
-        dl.innerHTML = accountOptions.map(acc => `<option value="${acc}">`).join('');
     }
 
-    addManualBtn.addEventListener('click', () => {
-        // Fetch accounts if not yet done (lazy load)
-        fetchAccounts();
+    function renderScanResults() {
+        let hasDup = false;
+        scanTbody.innerHTML = scanResults.map((item, i) => {
+            if (item.is_duplicate) hasDup = true;
+            return `
+            <tr class="${item.is_duplicate ? 'row-duplicate' : ''}">
+                <td><input type="date" value="${item.date || ''}" data-i="${i}" data-k="date" class="scan-input"></td>
+                <td><input type="text" value="${item.debit_account || ''}" list="account-list" data-i="${i}" data-k="debit_account" class="scan-input"></td>
+                <td><input type="text" value="${item.credit_account || ''}" list="account-list" data-i="${i}" data-k="credit_account" class="scan-input"></td>
+                <td><input type="number" value="${item.amount || 0}" data-i="${i}" data-k="amount" class="scan-input" style="width:100px;"></td>
+                <td>
+                    <select data-i="${i}" data-k="tax_classification" class="scan-input">
+                        <option value="10%" ${(item.tax_classification === '10%') ? 'selected' : ''}>10%</option>
+                        <option value="8%" ${(item.tax_classification === '8%') ? 'selected' : ''}>8%</option>
+                        <option value="非課税" ${(item.tax_classification === '非課税') ? 'selected' : ''}>非課税</option>
+                        <option value="不課税" ${(item.tax_classification === '不課税') ? 'selected' : ''}>不課税</option>
+                    </select>
+                </td>
+                <td><input type="text" value="${item.counterparty || ''}" data-i="${i}" data-k="counterparty" class="scan-input"></td>
+                <td><input type="text" value="${item.memo || ''}" data-i="${i}" data-k="memo" class="scan-input"></td>
+                <td><button class="btn-icon scan-delete" data-i="${i}" title="削除">×</button></td>
+            </tr>`;
+        }).join('');
 
-        // Check Payment Type Selector
-        // (Removed in favor of Split Button Auto-Detect)
-        let creditAcc = '';
+        scanDupAlert.classList.toggle('hidden', !hasDup);
 
+        // Bind events
+        scanTbody.querySelectorAll('.scan-input').forEach(el => {
+            el.addEventListener('change', (e) => {
+                const idx = parseInt(e.target.dataset.i);
+                scanResults[idx][e.target.dataset.k] = e.target.value;
+            });
+        });
+        scanTbody.querySelectorAll('.scan-delete').forEach(el => {
+            el.addEventListener('click', (e) => {
+                scanResults.splice(parseInt(e.target.dataset.i), 1);
+                renderScanResults();
+            });
+        });
+    }
 
-        // Add row with optional pre-filled credit account
-        const newItem = {
-            date: new Date().toISOString().split('T')[0], // Today
-            debit_account: '',
-            credit_account: creditAcc,
-            amount: 0,
-            counterparty: '',
-            memo: '',
-            source: 'manual' // Flag for backend routing
-        };
+    // Save scan results to DB
+    scanSaveBtn.addEventListener('click', async () => {
+        const valid = scanResults.filter(r => parseInt(r.amount) > 0);
+        if (!valid.length) { showToast('保存するデータがありません', true); return; }
 
-        extractedData.push(newItem);
-        renderResults(extractedData);
+        const entries = valid.map(r => ({
+            entry_date: r.date,
+            debit_account: r.debit_account,
+            credit_account: r.credit_account,
+            amount: parseInt(r.amount),
+            tax_classification: r.tax_classification || '10%',
+            counterparty: r.counterparty || '',
+            memo: r.memo || '',
+            evidence_url: r.evidence_url || '',
+            source: 'ai_receipt',
+        }));
 
-        // Focus on the first input of the new row
-        setTimeout(() => {
-            const inputs = resultsTable.querySelectorAll('input');
-            if (inputs.length > 0) inputs[inputs.length - 6].focus(); // approximate
-        }, 100);
+        try {
+            scanSaveBtn.disabled = true;
+            scanSaveBtn.textContent = '保存中...';
+            const res = await fetchAPI('/api/journal', 'POST', { entries });
+            if (res.status === 'success') {
+                showToast(`${res.created}件の仕訳を登録しました`);
+                scanResults = [];
+                scanTbody.innerHTML = '';
+                scanResultsCard.classList.add('hidden');
+                loadRecentEntries();
+            } else {
+                showToast('登録に失敗しました', true);
+            }
+        } catch (err) {
+            showToast('通信エラー', true);
+        } finally {
+            scanSaveBtn.disabled = false;
+            scanSaveBtn.textContent = '仕訳を登録';
+        }
     });
 
-    // --- New: Start Manual Entry from Landing ---
-    const startManualBtn = document.getElementById('start-manual-btn');
-    if (startManualBtn) {
-        startManualBtn.addEventListener('click', (e) => {
-            e.stopPropagation(); // Prevent dropZone file picker
-            e.preventDefault();
-            fetchAccounts(); // Ensure accounts are loaded
+    // ============================================================
+    //  Section 9: Tab 3 — 仕訳帳 (Journal Book)
+    // ============================================================
+    const jbStartInput = document.getElementById('jb-start');
+    const jbEndInput = document.getElementById('jb-end');
+    const jbAccountSelect = document.getElementById('jb-account');
+    const jbSearchInput = document.getElementById('jb-search');
+    const jbApplyBtn = document.getElementById('jb-apply');
+    const jbTbody = document.getElementById('jb-tbody');
+    const jbPagination = document.getElementById('jb-pagination');
 
-            // Hide drop zone, show results
-            dropZone.classList.add('hidden');
-            resultsArea.classList.remove('hidden');
+    let jbPage = 1;
+    const JB_PER_PAGE = 20;
 
-            // Add initial empty row
-            const newItem = {
-                date: new Date().toISOString().split('T')[0],
-                debit_account: '',
-                credit_account: '',
-                amount: 0,
-                counterparty: '',
-                memo: '',
-                source: 'manual'
-            };
-            extractedData = [newItem];
-            renderResults(extractedData);
+    // Set default date range to current year
+    const fy = fiscalYearDates();
+    jbStartInput.value = fy.start;
+    jbEndInput.value = fy.end;
 
-            // Focus
-            setTimeout(() => {
-                const inputs = resultsTable.querySelectorAll('input');
-                if (inputs.length > 0) inputs[0].focus();
-            }, 100);
-        });
+    jbApplyBtn.addEventListener('click', () => { jbPage = 1; loadJournalBook(); });
+
+    async function loadJournalBook() {
+        const params = new URLSearchParams();
+        if (jbStartInput.value) params.set('start_date', jbStartInput.value);
+        if (jbEndInput.value) params.set('end_date', jbEndInput.value);
+        if (jbAccountSelect.value) params.set('account_id', jbAccountSelect.value);
+        const search = jbSearchInput.value.trim();
+        if (search) {
+            params.set('counterparty', search);
+            params.set('memo', search);
+        }
+        params.set('page', jbPage);
+        params.set('per_page', JB_PER_PAGE);
+
+        try {
+            const data = await fetchAPI('/api/journal?' + params.toString());
+            renderJournalBook(data);
+        } catch (err) {
+            showToast('仕訳帳の読み込みに失敗しました', true);
+        }
     }
 
-    function renderResults(data) {
-        resultsTable.innerHTML = '';
-        let hasDuplicate = false;
-
-        // Ensure datalist exists whenever rendering
-        if (accountOptions.length > 0) setupDatalist();
-        else fetchAccounts();
-
-        data.forEach((item, index) => {
-            if (item.is_duplicate) hasDuplicate = true;
-            const row = document.createElement('tr');
-            if (item.is_duplicate) row.classList.add('duplicate');
-            if (item.source === 'manual') row.style.backgroundColor = '#f0f8ff20'; // Slight highlight for manual
-
-            row.innerHTML = `
-                <td><input type="date" value="${item.date || ''}" data-index="${index}" data-key="date" style="width:110px;"></td>
-                <td><input type="text" list="account-datalist" value="${item.debit_account || ''}" data-index="${index}" data-key="debit_account" placeholder="借方科目"></td>
-                <td><input type="text" list="account-datalist" value="${item.credit_account || ''}" data-index="${index}" data-key="credit_account" placeholder="貸方科目"></td>
-                <td><input type="number" value="${item.amount || 0}" data-index="${index}" data-key="amount"></td>
-                <td><input type="text" value="${item.counterparty || ''}" data-index="${index}" data-key="counterparty" placeholder="取引先"></td>
-                <td><input type="text" value="${item.memo || ''}" data-index="${index}" data-key="memo" placeholder="摘要"></td>
+    function renderJournalBook(data) {
+        const entries = data.entries || [];
+        jbTbody.innerHTML = entries.map(e => `
+            <tr data-id="${e.id}">
+                <td>${e.entry_date || ''}</td>
+                <td>${e.debit_account || ''}</td>
+                <td>${e.credit_account || ''}</td>
+                <td class="text-right">${fmt(e.amount)}</td>
+                <td>${e.tax_classification || ''}</td>
+                <td>${e.counterparty || ''}</td>
+                <td>${e.memo || ''}</td>
                 <td>
-                    <button class="delete-row-btn" data-index="${index}" style="background:none; border:none; color:#f66; cursor:pointer;">×</button>
+                    <button class="btn-icon jb-edit" data-id="${e.id}" title="編集">✎</button>
+                    <button class="btn-icon jb-delete" data-id="${e.id}" title="削除">×</button>
                 </td>
-            `;
-            resultsTable.appendChild(row);
-        });
+            </tr>
+        `).join('');
 
-        const duplicateAlert = document.getElementById('duplicate-alert');
-        duplicateAlert.style.display = hasDuplicate ? 'flex' : 'none';
-
-        resultsTable.querySelectorAll('input').forEach(input => {
-            input.addEventListener('change', (e) => {
-                extractedData[e.target.dataset.index][e.target.dataset.key] = e.target.value;
-            });
-        });
-
-        resultsTable.querySelectorAll('.delete-row-btn').forEach(btn => {
-            btn.addEventListener('click', (e) => {
-                const idx = parseInt(e.target.dataset.index);
-                extractedData.splice(idx, 1);
-                renderResults(extractedData);
-            });
-        });
-    }
-
-    // --- Dropdown Menu Logic ---
-    const menuBtn = document.getElementById('auto-predict-menu-btn');
-    const dropdown = document.getElementById('auto-predict-dropdown');
-
-    if (menuBtn && dropdown) {
-        menuBtn.addEventListener('click', (e) => {
-            e.stopPropagation();
-            dropdown.style.display = dropdown.style.display === 'block' ? 'none' : 'block';
-        });
-
-        // Close dropdown when clicking outside
-        document.addEventListener('click', () => {
-            dropdown.style.display = 'none';
-        });
-
-        // Handle Menu Item Clicks
-        dropdown.querySelectorAll('a').forEach(link => {
-            link.addEventListener('click', (e) => {
-                e.preventDefault();
-                const mode = e.target.dataset.mode; // unpaid, cash, bank, auto
-                runAutoPredict(mode);
-            });
-        });
-    }
-
-    function runAutoPredict(mode) {
-        // FORCE SYNC (Keep this robust logic)
-        const inputs = resultsTable.querySelectorAll('input');
-        inputs.forEach(input => {
-            const idx = parseInt(input.dataset.index);
-            const key = input.dataset.key;
-            if (!isNaN(idx) && key && extractedData[idx]) extractedData[idx][key] = input.value;
-        });
-
-        // 1. Pre-fill Credit Account based on Mode (Local Override)
-        let forcedCredit = null;
-        if (mode === 'unpaid') forcedCredit = '未払金';
-        if (mode === 'cash') forcedCredit = '現金';
-        if (mode === 'bank') forcedCredit = '普通預金';
-
-        // 2. Find Targets
-        // If mode is specific (e.g. Cash), we target rows where Credit is Empty OR matches target (to refine) and Debit is Empty.
-        // Actually, simpler: Target rows where Debit is Empty. And set Credit to forced value if empty or different?
-        // Let's stick to safe logic: Target rows with missing accounts.
-
-        const targets = extractedData.map((item, idx) => ({ ...item, index: idx }))
-            .filter(item => (!item.debit_account || !item.credit_account) && (item.counterparty || item.memo));
-
-        if (targets.length === 0) {
-            alert("自動判定できる行がありません。");
-            return;
+        if (!entries.length) {
+            jbTbody.innerHTML = '<tr><td colspan="8" style="text-align:center;color:var(--text-muted);padding:2rem;">仕訳データがありません</td></tr>';
         }
 
-        // Apply Forced Credit locally BEFORE sending
-        if (forcedCredit) {
-            targets.forEach(t => {
-                // If credit is empty, fill it. 
-                // Determine if we should overwrite existing? User said "Predict as Cash".
-                // Let's safe-overwrite: If currently empty, fill it.
-                if (!extractedData[t.index].credit_account) {
-                    extractedData[t.index].credit_account = forcedCredit;
-                    t.credit_account = forcedCredit; // Update target object for API
+        // Pagination
+        const total = data.total || 0;
+        const totalPages = Math.ceil(total / JB_PER_PAGE);
+        let pgHtml = '';
+        if (totalPages > 1) {
+            if (jbPage > 1) pgHtml += `<button class="btn btn-sm btn-ghost jb-page" data-p="${jbPage - 1}">← 前</button>`;
+            pgHtml += `<span style="padding:0.5rem;">${jbPage} / ${totalPages} (${total}件)</span>`;
+            if (jbPage < totalPages) pgHtml += `<button class="btn btn-sm btn-ghost jb-page" data-p="${jbPage + 1}">次 →</button>`;
+        }
+        jbPagination.innerHTML = pgHtml;
+
+        // Bind events
+        jbTbody.querySelectorAll('.jb-delete').forEach(btn => {
+            btn.addEventListener('click', async (e) => {
+                const id = e.target.dataset.id;
+                if (!confirm('この仕訳を削除しますか？')) return;
+                try {
+                    const res = await fetchAPI(`/api/journal/${id}`, 'DELETE');
+                    if (res.status === 'success') {
+                        showToast('削除しました');
+                        loadJournalBook();
+                        loadRecentEntries();
+                    } else {
+                        showToast('削除に失敗しました', true);
+                    }
+                } catch (err) {
+                    showToast('通信エラー', true);
                 }
             });
-            // Re-render to show "Cash" immediately? Maybe better to wait for full result.
-        }
-
-        const apiKey = localStorage.getItem('gemini_api_key');
-        const sheetId = localStorage.getItem('spreadsheet_id');
-        if (!apiKey || !sheetId) { alert("設定不足です"); return; }
-
-        menuBtn.textContent = '判定中...';
-        menuBtn.disabled = true;
-
-        fetch('/api/predict', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                data: targets.map(t => ({
-                    index: t.index,
-                    counterparty: t.counterparty,
-                    memo: t.memo,
-                    debit: t.debit_account,
-                    credit: t.credit_account
-                })),
-                gemini_api_key: apiKey,
-                spreadsheet_id: sheetId,
-                access_token: accessToken
-            })
-        })
-            .then(res => res.json())
-            .then(predictions => {
-                if (predictions.error) throw new Error(predictions.error);
-                let count = 0;
-                predictions.forEach(p => {
-                    const targetRow = extractedData[p.index];
-                    if (targetRow) {
-                        if (p.debit && !targetRow.debit_account) targetRow.debit_account = p.debit;
-                        if (p.credit && !targetRow.credit_account) targetRow.credit_account = p.credit;
-                        count++;
-                    }
-                });
-                renderResults(extractedData);
-                alert(`${count}件の科目を判定しました！`);
-            })
-            .catch(err => {
-                console.error(err);
-                alert(`エラー: ${err.message}`);
-            })
-            .finally(() => {
-                menuBtn.disabled = false;
-                menuBtn.textContent = '✨ 科目を自動判定 ▼';
-            });
-    }
-
-
-
-    sendBtn.addEventListener('click', () => {
-        const apiKey = localStorage.getItem('gemini_api_key');
-        const sheetId = localStorage.getItem('spreadsheet_id');
-
-        sendBtn.disabled = true;
-        sendBtn.textContent = '送信中...';
-
-        // Filter out rows with Amount 0 or empty
-        const validData = extractedData.filter(item => {
-            const val = parseInt(item.amount);
-            return !isNaN(val) && val !== 0;
         });
 
-        if (validData.length === 0) {
-            alert("金額が0円以外のデータがありません。保存を中止します。");
-            sendBtn.disabled = false;
-            sendBtn.textContent = 'スプレッドシートに書き込む';
+        jbTbody.querySelectorAll('.jb-edit').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                const id = e.target.dataset.id;
+                const row = e.target.closest('tr');
+                startInlineEdit(row, id);
+            });
+        });
+
+        jbPagination.querySelectorAll('.jb-page').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                jbPage = parseInt(e.target.dataset.p);
+                loadJournalBook();
+            });
+        });
+    }
+
+    function startInlineEdit(row, entryId) {
+        const cells = row.querySelectorAll('td');
+        const original = {
+            entry_date: cells[0].textContent.trim(),
+            debit_account: cells[1].textContent.trim(),
+            credit_account: cells[2].textContent.trim(),
+            amount: cells[3].textContent.trim().replace(/,/g, ''),
+            tax_classification: cells[4].textContent.trim(),
+            counterparty: cells[5].textContent.trim(),
+            memo: cells[6].textContent.trim(),
+        };
+
+        row.innerHTML = `
+            <td><input type="date" value="${original.entry_date}" class="edit-input" data-k="entry_date"></td>
+            <td><input type="text" value="${original.debit_account}" list="account-list" class="edit-input" data-k="debit_account"></td>
+            <td><input type="text" value="${original.credit_account}" list="account-list" class="edit-input" data-k="credit_account"></td>
+            <td><input type="number" value="${original.amount}" class="edit-input" data-k="amount" style="width:100px;"></td>
+            <td>
+                <select class="edit-input" data-k="tax_classification">
+                    <option value="10%" ${original.tax_classification === '10%' ? 'selected' : ''}>10%</option>
+                    <option value="8%" ${original.tax_classification === '8%' ? 'selected' : ''}>8%</option>
+                    <option value="非課税" ${original.tax_classification === '非課税' ? 'selected' : ''}>非課税</option>
+                    <option value="不課税" ${original.tax_classification === '不課税' ? 'selected' : ''}>不課税</option>
+                </select>
+            </td>
+            <td><input type="text" value="${original.counterparty}" class="edit-input" data-k="counterparty"></td>
+            <td><input type="text" value="${original.memo}" class="edit-input" data-k="memo"></td>
+            <td>
+                <button class="btn-icon edit-save" title="保存">✓</button>
+                <button class="btn-icon edit-cancel" title="キャンセル">✕</button>
+            </td>
+        `;
+
+        row.querySelector('.edit-save').addEventListener('click', async () => {
+            const updated = {};
+            row.querySelectorAll('.edit-input').forEach(inp => {
+                updated[inp.dataset.k] = inp.value;
+            });
+            updated.amount = parseInt(updated.amount) || 0;
+            try {
+                const res = await fetchAPI(`/api/journal/${entryId}`, 'PUT', updated);
+                if (res.status === 'success') {
+                    showToast('更新しました');
+                    loadJournalBook();
+                    loadRecentEntries();
+                } else {
+                    showToast('更新に失敗しました', true);
+                }
+            } catch (err) {
+                showToast('通信エラー', true);
+            }
+        });
+
+        row.querySelector('.edit-cancel').addEventListener('click', () => loadJournalBook());
+    }
+
+    // ============================================================
+    //  Section 10: Tab 4 — 残高一覧表 (Trial Balance)
+    // ============================================================
+    const tbStartInput = document.getElementById('tb-start');
+    const tbEndInput = document.getElementById('tb-end');
+    const tbApplyBtn = document.getElementById('tb-apply');
+    const tbContent = document.getElementById('tb-content');
+
+    tbStartInput.value = fy.start;
+    tbEndInput.value = fy.end;
+
+    tbApplyBtn.addEventListener('click', loadTrialBalance);
+
+    async function loadTrialBalance() {
+        const params = new URLSearchParams();
+        if (tbStartInput.value) params.set('start_date', tbStartInput.value);
+        if (tbEndInput.value) params.set('end_date', tbEndInput.value);
+
+        try {
+            const data = await fetchAPI('/api/trial-balance?' + params.toString());
+            renderTrialBalance(data.balances || []);
+        } catch (err) {
+            showToast('残高一覧表の読み込みに失敗しました', true);
+        }
+    }
+
+    function renderTrialBalance(balances) {
+        if (!balances.length) {
+            tbContent.innerHTML = '<p style="text-align:center;color:var(--text-muted);padding:2rem;">データがありません</p>';
             return;
         }
 
-        fetch('/api/save', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                data: validData,
-                gemini_api_key: apiKey,
-                spreadsheet_id: sheetId,
-                access_token: accessToken
-            })
-        })
-            .then(response => response.json())
-            .then(data => {
-                if (data.error) throw new Error(data.error);
-                alert('スプレッドシートに保存しました！');
-                resetUI();
-            })
-            .catch(err => {
-                console.error(err);
-                alert(`保存エラー: ${err.message}`);
-            })
-            .finally(() => {
-                sendBtn.disabled = false;
-                sendBtn.textContent = 'スプレッドシートに書き込む';
-            });
-    });
+        // Group by account_type
+        const groups = {};
+        const typeOrder = ['資産', '負債', '純資産', '収益', '費用'];
+        typeOrder.forEach(t => { groups[t] = []; });
+        balances.forEach(b => {
+            const t = b.account_type || '費用';
+            if (!groups[t]) groups[t] = [];
+            groups[t].push(b);
+        });
 
-    resetBtn.addEventListener('click', resetUI);
-    function resetUI() {
-        resultsArea.classList.add('hidden');
-        dropZone.classList.remove('hidden');
-        fileInput.value = '';
-        extractedData = [];
+        let html = '';
+        let grandDebit = 0, grandCredit = 0;
+
+        typeOrder.forEach(type => {
+            const items = groups[type];
+            if (!items || !items.length) return;
+
+            let typeDebit = 0, typeCredit = 0;
+
+            html += `<div class="tb-section">
+                <h3 class="tb-section-title">${type}</h3>
+                <table class="tb-table">
+                    <thead>
+                        <tr>
+                            <th>コード</th>
+                            <th>勘定科目</th>
+                            <th class="text-right">期首残高</th>
+                            <th class="text-right">借方合計</th>
+                            <th class="text-right">貸方合計</th>
+                            <th class="text-right">残高</th>
+                        </tr>
+                    </thead>
+                    <tbody>`;
+
+            items.forEach(b => {
+                typeDebit += b.debit_total;
+                typeCredit += b.credit_total;
+                html += `
+                    <tr class="tb-row" data-account-id="${b.account_id}" style="cursor:pointer;">
+                        <td>${b.code}</td>
+                        <td>${b.name}</td>
+                        <td class="text-right">${fmt(b.opening_balance)}</td>
+                        <td class="text-right">${fmt(b.debit_total)}</td>
+                        <td class="text-right">${fmt(b.credit_total)}</td>
+                        <td class="text-right" style="font-weight:600;">${fmt(b.closing_balance)}</td>
+                    </tr>`;
+            });
+
+            html += `<tr class="tb-subtotal">
+                        <td colspan="3">${type} 合計</td>
+                        <td class="text-right">${fmt(typeDebit)}</td>
+                        <td class="text-right">${fmt(typeCredit)}</td>
+                        <td></td>
+                    </tr>
+                    </tbody></table></div>`;
+
+            grandDebit += typeDebit;
+            grandCredit += typeCredit;
+        });
+
+        // Grand total
+        html += `<div class="tb-grand-total">
+            <span>借方合計: <strong>${fmt(grandDebit)}</strong></span>
+            <span>貸方合計: <strong>${fmt(grandCredit)}</strong></span>
+            <span>差額: <strong>${fmt(grandDebit - grandCredit)}</strong></span>
+        </div>`;
+
+        tbContent.innerHTML = html;
+
+        // Drill-down: click account row → switch to journal book with that account filter
+        tbContent.querySelectorAll('.tb-row').forEach(row => {
+            row.addEventListener('click', () => {
+                const accId = row.dataset.accountId;
+                jbAccountSelect.value = accId;
+                jbStartInput.value = tbStartInput.value;
+                jbEndInput.value = tbEndInput.value;
+                jbPage = 1;
+                location.hash = 'journal-book';
+                switchTab('journal-book');
+            });
+        });
     }
+
+    // ============================================================
+    //  Section 11: Keyboard Shortcuts
+    // ============================================================
+    document.addEventListener('keydown', (e) => {
+        // Ctrl+Enter to submit journal form when in Tab 1
+        if (e.ctrlKey && e.key === 'Enter') {
+            const activePanel = document.querySelector('.tab-panel.active');
+            if (activePanel && activePanel.id === 'tab-journal-input') {
+                journalForm.dispatchEvent(new Event('submit'));
+            }
+        }
+    });
 });

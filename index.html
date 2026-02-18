@@ -4,186 +4,275 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AI 複式簿記くん - 自動記帳ツール</title>
+    <title>AI 複式簿記くん</title>
     <link rel="stylesheet" href="style.css">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=Outfit:wght@500;700&display=swap"
-        rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <script src="https://accounts.google.com/gsi/client" async defer></script>
 </head>
 
 <body>
-    <div class="background-blobs">
-        <div class="blob blob-1"></div>
-        <div class="blob blob-2"></div>
-        <div class="blob blob-3"></div>
-    </div>
-
-    <div class="container">
-        <header>
+    <div class="app">
+        <!-- Header -->
+        <header class="app-header">
             <div class="header-left">
-                <div class="logo">AI <span>Accounting</span></div>
-                <h1>確定申告を、もっと楽に。</h1>
-                <p>レシートや請求書をアップロードするだけで、AIが複式簿記で自動記帳します。</p>
+                <div class="logo">AI <span>複式簿記くん</span></div>
             </div>
+            <nav class="tab-nav" id="tab-nav">
+                <button class="tab-btn active" data-tab="journal-input">仕訳入力</button>
+                <button class="tab-btn" data-tab="scan">証憑読み取り</button>
+                <button class="tab-btn" data-tab="journal-book">仕訳帳</button>
+                <button class="tab-btn" data-tab="trial-balance">残高一覧表</button>
+            </nav>
             <div class="header-right">
-                <button id="auth-btn" class="primary-btn"
-                    style="font-size: 0.9rem; padding: 0.5rem 1rem;">Googleでログイン</button>
-                <button id="settings-btn" class="secondary-btn" title="設定"
-                    style="display: none;">⚙️</button>
+                <button id="settings-btn" class="icon-btn" title="設定" style="display:none;">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+                </button>
+                <button id="auth-btn" class="btn-sm btn-primary">Googleでログイン</button>
             </div>
         </header>
 
-        <main>
-            <div id="drop-zone" class="glass-panel">
-                <div class="upload-icon">
-                    <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"
-                        stroke-linecap="round" stroke-linejoin="round">
-                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                        <polyline points="17 8 12 3 7 8" />
-                        <line x1="12" y1="3" x2="12" y2="15" />
-                    </svg>
-                </div>
-                <p>ファイルをドラッグ＆ドロップ、または<span>ファイルを選択</span></p>
-                <input type="file" id="file-input" multiple accept="image/*,.csv,.pdf" hidden>
-                <div style="margin-top: 1.5rem;">
-                    <button id="start-manual-btn" class="secondary-btn">＋手入力のみで開始</button>
-                </div>
-            </div>
+        <!-- Main Content -->
+        <main class="app-main">
 
-            <div id="setup-guide" class="glass-panel setup-guide">
-                <h3>はじめに：ご利用前の準備</h3>
-                <div class="setup-steps">
-                    <div class="setup-step">
-                        <div class="step-number">1</div>
-                        <div class="step-content">
-                            <h4>Googleスプレッドシートを作成</h4>
-                            <p>新しいスプレッドシートを作成し、URLからスプレッドシートIDをコピーしてください。</p>
-                            <p class="step-hint">URLの <code>https://docs.google.com/spreadsheets/d/<strong>ここがID</strong>/edit</code> の部分です。</p>
-                            <a href="https://sheets.new" target="_blank" class="setup-link">新しいスプレッドシートを作成 →</a>
+            <!-- Tab 1: 仕訳入力 -->
+            <section id="tab-journal-input" class="tab-panel active">
+                <div class="card">
+                    <h2 class="card-title">仕訳入力</h2>
+                    <form id="journal-form" class="journal-form">
+                        <div class="form-row">
+                            <div class="form-group" style="flex:0 0 140px;">
+                                <label for="je-date">日付</label>
+                                <input type="date" id="je-date" required>
+                            </div>
+                            <div class="form-group" style="flex:1;">
+                                <label for="je-debit">借方科目</label>
+                                <input type="text" id="je-debit" list="account-list" placeholder="旅費交通費" required autocomplete="off">
+                            </div>
+                            <div class="form-group" style="flex:1;">
+                                <label for="je-credit">貸方科目</label>
+                                <input type="text" id="je-credit" list="account-list" placeholder="未払金" required autocomplete="off">
+                            </div>
+                            <div class="form-group" style="flex:0 0 130px;">
+                                <label for="je-amount">金額(税込)</label>
+                                <input type="number" id="je-amount" placeholder="1100" min="0" required>
+                            </div>
+                            <div class="form-group" style="flex:0 0 110px;">
+                                <label for="je-tax">税区分</label>
+                                <select id="je-tax">
+                                    <option value="10%">10% 標準</option>
+                                    <option value="8%">8% 軽減</option>
+                                    <option value="非課税">非課税</option>
+                                    <option value="不課税">不課税</option>
+                                </select>
+                            </div>
                         </div>
-                    </div>
-                    <div class="setup-step">
-                        <div class="step-number">2</div>
-                        <div class="step-content">
-                            <h4>Gemini APIキーを取得</h4>
-                            <p>Google AI StudioからAPIキーを無料で取得できます。</p>
-                            <a href="https://aistudio.google.com/app/apikey" target="_blank" class="setup-link">APIキーを取得する →</a>
+                        <div class="form-row">
+                            <div class="form-group" style="flex:1;">
+                                <label for="je-counterparty">取引先</label>
+                                <input type="text" id="je-counterparty" placeholder="JR東日本">
+                            </div>
+                            <div class="form-group" style="flex:2;">
+                                <label for="je-memo">摘要</label>
+                                <input type="text" id="je-memo" placeholder="交通費 東京〜横浜">
+                            </div>
+                            <div class="form-group form-group-info">
+                                <label>消費税(参考)</label>
+                                <span id="je-tax-display" class="tax-display">0 円</span>
+                            </div>
+                            <div class="form-group form-group-actions">
+                                <button type="submit" class="btn btn-primary">登録</button>
+                                <button type="reset" class="btn btn-ghost">クリア</button>
+                            </div>
                         </div>
-                    </div>
-                    <div class="setup-step">
-                        <div class="step-number">3</div>
-                        <div class="step-content">
-                            <h4>設定画面で入力</h4>
-                            <p>ログイン後、右上の ⚙️ ボタンからスプレッドシートIDとAPIキーを設定してください。</p>
-                        </div>
-                    </div>
+                    </form>
                 </div>
-            </div>
 
-            <div id="status-area" class="hidden">
-                <div class="loading-spinner"></div>
-                <p id="status-text">AIが解析中...</p>
-            </div>
-
-            <div id="results-area" class="hidden">
-                <div id="duplicate-alert" class="hidden">
-                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <path
-                            d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z">
-                        </path>
-                        <line x1="12" y1="9" x2="12" y2="13"></line>
-                        <line x1="12" y1="17" x2="12.01" y2="17"></line>
-                    </svg>
-                    <span>既にスプレッドシートに登録されている可能性がある項目を強調しています。</span>
-                </div>
-                <div class="glass-panel preview-card">
-                    <h3>解析結果の確認</h3>
-                    <div class="scroll-container">
-                        <table id="results-table">
+                <div class="card" id="recent-entries-card">
+                    <h3 class="card-subtitle">直近の仕訳</h3>
+                    <div class="table-wrap">
+                        <table id="recent-table">
                             <thead>
                                 <tr>
-                                    <th>日時</th>
-                                    <th>借方科目</th>
-                                    <th>貸方科目</th>
-                                    <th>金額</th>
+                                    <th>日付</th>
+                                    <th>借方</th>
+                                    <th>貸方</th>
+                                    <th class="text-right">金額</th>
+                                    <th>税区分</th>
                                     <th>取引先</th>
                                     <th>摘要</th>
                                 </tr>
                             </thead>
-                            <tbody>
-                                <!-- Results will be injected here -->
-                            </tbody>
+                            <tbody id="recent-tbody"></tbody>
                         </table>
                     </div>
-                    <div class="actions">
-                        <button id="add-more-btn" class="secondary-btn">ファイルを追加</button>
-                        <button id="add-manual-btn" class="secondary-btn">＋手入力行を追加</button>
+                </div>
+                <datalist id="account-list"></datalist>
+            </section>
 
-                        <!-- Auto-Detect Dropdown -->
-                        <div class="dropdown" style="position: relative; display: inline-block;">
-                            <button id="auto-predict-menu-btn" class="primary-btn">
-                                ✨ 科目を自動判定 ▼
-                            </button>
-                            <div id="auto-predict-dropdown" class="dropdown-content"
-                                style="display: none; position: absolute; right: 0; min-width: 200px; z-index: 1;">
-                                <a href="#" data-mode="unpaid">未払金 (カード等)</a>
-                                <a href="#" data-mode="cash">現金</a>
-                                <a href="#" data-mode="bank">普通預金</a>
-                                <a href="#" data-mode="auto">完全自動 (AI)</a>
-                            </div>
+            <!-- Tab 2: 証憑読み取り -->
+            <section id="tab-scan" class="tab-panel">
+                <div class="card">
+                    <h2 class="card-title">証憑読み取り</h2>
+                    <div id="drop-zone" class="drop-zone">
+                        <div class="drop-zone-icon">
+                            <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                                <polyline points="17 8 12 3 7 8"/>
+                                <line x1="12" y1="3" x2="12" y2="15"/>
+                            </svg>
                         </div>
-                        <button id="send-btn" class="primary-btn">スプレッドシートに書き込む</button>
-                    </div>
-                    <div style="text-align: right; margin-top: 10px;">
-                        <button id="reset-btn" class="text-btn">やり直す</button>
+                        <p>レシート・請求書・CSV明細をドラッグ&ドロップ</p>
+                        <p class="drop-zone-hint">または<span class="link">ファイルを選択</span></p>
+                        <input type="file" id="file-input" multiple accept="image/*,.csv,.pdf" hidden>
                     </div>
                 </div>
-            </div>
+
+                <div id="scan-status" class="status-area hidden">
+                    <div class="spinner"></div>
+                    <p id="scan-status-text">AIが解析中...</p>
+                </div>
+
+                <div id="scan-results" class="card hidden">
+                    <h3 class="card-subtitle">解析結果の確認</h3>
+                    <div id="scan-duplicate-alert" class="alert alert-warn hidden">
+                        <span>既に登録されている可能性がある項目を強調しています。</span>
+                    </div>
+                    <div class="table-wrap">
+                        <table id="scan-table">
+                            <thead>
+                                <tr>
+                                    <th>日付</th>
+                                    <th>借方</th>
+                                    <th>貸方</th>
+                                    <th>金額</th>
+                                    <th>税区分</th>
+                                    <th>取引先</th>
+                                    <th>摘要</th>
+                                    <th></th>
+                                </tr>
+                            </thead>
+                            <tbody id="scan-tbody"></tbody>
+                        </table>
+                    </div>
+                    <div class="card-actions">
+                        <button id="scan-add-file" class="btn btn-ghost">ファイルを追加</button>
+                        <input type="file" id="scan-add-input" multiple accept="image/*,.csv,.pdf" hidden>
+                        <button id="scan-save" class="btn btn-primary">仕訳を登録</button>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Tab 3: 仕訳帳 -->
+            <section id="tab-journal-book" class="tab-panel">
+                <div class="card">
+                    <h2 class="card-title">仕訳帳</h2>
+                    <div class="filter-bar" id="jb-filters">
+                        <input type="date" id="jb-start" class="filter-input">
+                        <span class="filter-sep">〜</span>
+                        <input type="date" id="jb-end" class="filter-input">
+                        <select id="jb-account" class="filter-input">
+                            <option value="">全科目</option>
+                        </select>
+                        <input type="text" id="jb-search" class="filter-input" placeholder="取引先・摘要で検索">
+                        <button id="jb-apply" class="btn btn-sm btn-primary">検索</button>
+                    </div>
+                    <div class="table-wrap">
+                        <table id="jb-table">
+                            <thead>
+                                <tr>
+                                    <th>日付</th>
+                                    <th>借方</th>
+                                    <th>貸方</th>
+                                    <th class="text-right">金額</th>
+                                    <th>税区分</th>
+                                    <th>取引先</th>
+                                    <th>摘要</th>
+                                    <th style="width:80px;"></th>
+                                </tr>
+                            </thead>
+                            <tbody id="jb-tbody"></tbody>
+                        </table>
+                    </div>
+                    <div class="pagination" id="jb-pagination"></div>
+                </div>
+            </section>
+
+            <!-- Tab 4: 残高一覧表 -->
+            <section id="tab-trial-balance" class="tab-panel">
+                <div class="card">
+                    <h2 class="card-title">勘定科目別残高一覧表</h2>
+                    <div class="filter-bar">
+                        <label>期間:</label>
+                        <input type="date" id="tb-start" class="filter-input">
+                        <span class="filter-sep">〜</span>
+                        <input type="date" id="tb-end" class="filter-input">
+                        <button id="tb-apply" class="btn btn-sm btn-primary">表示</button>
+                    </div>
+                    <div id="tb-content"></div>
+                </div>
+            </section>
+
         </main>
 
-        <input type="file" id="add-more-input" multiple accept="image/*,.csv,.pdf" hidden>
-
-        <footer>
-            <p>&copy; 2026 AI Accounting Tool. Gemini Powered.</p>
+        <footer class="app-footer">
+            <p>AI Accounting Tool - Gemini Powered</p>
         </footer>
     </div>
 
     <!-- Settings Modal -->
     <div id="settings-modal" class="modal hidden">
-        <div class="modal-content glass-panel">
+        <div class="modal-backdrop"></div>
+        <div class="modal-content card">
             <div class="modal-header">
                 <h2>設定</h2>
-                <span class="close-modal">&times;</span>
+                <button class="close-btn" id="close-settings">&times;</button>
             </div>
             <div class="form-group">
                 <label>Gemini API Key</label>
                 <input type="password" id="api-key-input" placeholder="AIzaSy...">
-                <small>Gemini APIキーを入力してください。<a href="https://aistudio.google.com/app/apikey"
-                        target="_blank">取得はこちら</a></small>
+                <small>Google AI StudioからAPIキーを取得: <a href="https://aistudio.google.com/app/apikey" target="_blank">取得する</a></small>
             </div>
             <div class="form-group">
-                <label>Spreadsheet ID</label>
+                <label>Spreadsheet ID (エクスポート用)</label>
                 <input type="text" id="spreadsheet-id-input" placeholder="1twlGw...">
-                <small>書き込み先のスプレッドシートIDを入力してください。</small>
+                <small>エクスポート先のスプレッドシートID <a href="https://sheets.new" target="_blank">新規作成</a></small>
             </div>
-            <button id="save-settings-btn" class="primary-btn">設定を保存</button>
+            <button id="save-settings-btn" class="btn btn-primary" style="width:100%;">設定を保存</button>
         </div>
     </div>
 
     <!-- Login Overlay -->
-    <div id="login-overlay" class="overlay">
-        <div class="glass-panel overlay-content">
-            <h2>ようこそ</h2>
-            <p>利用を開始するには、Googleアカウントでログインしてください。</p>
-            <button id="overlay-login-btn" class="primary-btn">Googleでログイン</button>
+    <div id="login-overlay" class="overlay hidden">
+        <div class="card overlay-card">
+            <h2>AI 複式簿記くん</h2>
+            <p>個人事業主のための AI 自動記帳ツール</p>
+            <div class="setup-steps">
+                <div class="setup-step">
+                    <span class="step-num">1</span>
+                    <div>
+                        <strong>Gemini APIキーを取得</strong>
+                        <a href="https://aistudio.google.com/app/apikey" target="_blank" class="setup-link">取得する →</a>
+                    </div>
+                </div>
+                <div class="setup-step">
+                    <span class="step-num">2</span>
+                    <div>
+                        <strong>スプレッドシートを作成</strong>
+                        <a href="https://sheets.new" target="_blank" class="setup-link">作成する →</a>
+                    </div>
+                </div>
+                <div class="setup-step">
+                    <span class="step-num">3</span>
+                    <div><strong>Googleでログインして開始</strong></div>
+                </div>
+            </div>
+            <button id="overlay-login-btn" class="btn btn-primary" style="width:100%; margin-top:1.5rem;">Googleでログイン</button>
         </div>
     </div>
 
-    </div>
-
-    <script src="script.js?v=2"></script>
+    <script src="script.js?v=3"></script>
 </body>
 
 </html>
