@@ -205,6 +205,43 @@ body {
 .ledger-sub-panel { display: none; }
 .ledger-sub-panel.active { display: block; }
 
+/* === Period Presets === */
+.period-presets {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    margin-bottom: 1rem;
+    flex-wrap: wrap;
+}
+.preset-btns {
+    display: flex;
+    gap: 4px;
+}
+.preset-btn {
+    padding: 0.375rem 0.75rem;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--bg-white);
+    color: var(--text-secondary);
+    font-size: 0.75rem;
+    font-weight: 500;
+    cursor: pointer;
+    font-family: inherit;
+    transition: all 0.15s;
+    white-space: nowrap;
+}
+.preset-btn:hover { background: var(--bg); border-color: var(--text-dim); }
+.preset-btn.active {
+    background: var(--primary);
+    color: #fff;
+    border-color: var(--primary);
+}
+.period-dates {
+    display: flex;
+    align-items: center;
+    gap: 0.375rem;
+}
+
 /* === Counterparty Form === */
 .card-header-row {
     display: flex;

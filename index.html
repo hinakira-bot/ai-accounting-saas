@@ -238,22 +238,30 @@
                 <div class="card">
                     <h2 class="card-title">総勘定元帳</h2>
                     <div class="sub-tab-nav" id="ledger-sub-nav">
-                        <button class="sub-tab-btn active" data-subtab="trial-balance">残高一覧表</button>
-                        <button class="sub-tab-btn" data-subtab="balance-sheet">貸借対照表</button>
+                        <button class="sub-tab-btn active" data-subtab="bs-assets">貸借対照表（資産）</button>
+                        <button class="sub-tab-btn" data-subtab="bs-liabilities">貸借対照表（負債・純資産）</button>
                         <button class="sub-tab-btn" data-subtab="profit-loss">損益計算書</button>
                     </div>
-                    <div class="filter-bar" id="ledger-filters">
-                        <label>期間:</label>
-                        <input type="date" id="ledger-start" class="filter-input">
-                        <span class="filter-sep">〜</span>
-                        <input type="date" id="ledger-end" class="filter-input">
-                        <button id="ledger-apply" class="btn btn-sm btn-primary">表示</button>
+                    <div class="period-presets" id="ledger-presets">
+                        <div class="preset-btns">
+                            <button class="preset-btn active" data-period="ytd">年初〜当日</button>
+                            <button class="preset-btn" data-period="year">年間</button>
+                            <button class="preset-btn" data-period="month">当月</button>
+                            <button class="preset-btn" data-period="prev-month">前月</button>
+                        </div>
+                        <select class="filter-input" id="ledger-year-select"></select>
+                        <div class="period-dates">
+                            <input type="date" id="ledger-start" class="filter-input">
+                            <span class="filter-sep">〜</span>
+                            <input type="date" id="ledger-end" class="filter-input">
+                            <button id="ledger-apply" class="btn btn-sm btn-primary">表示</button>
+                        </div>
                     </div>
-                    <div id="ledger-tab-trial-balance" class="ledger-sub-panel active">
-                        <div id="tb-content"></div>
+                    <div id="ledger-tab-bs-assets" class="ledger-sub-panel active">
+                        <div id="bs-assets-content"></div>
                     </div>
-                    <div id="ledger-tab-balance-sheet" class="ledger-sub-panel">
-                        <div id="bs-content"></div>
+                    <div id="ledger-tab-bs-liabilities" class="ledger-sub-panel">
+                        <div id="bs-liabilities-content"></div>
                     </div>
                     <div id="ledger-tab-profit-loss" class="ledger-sub-panel">
                         <div id="pl-content"></div>
@@ -420,7 +428,7 @@
         </div>
     </div>
 
-    <script src="script.js?v=5"></script>
+    <script src="script.js?v=6"></script>
 </body>
 
 </html>

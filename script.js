@@ -742,6 +742,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // ============================================================
     //  Section 10: View 4 — 総勘定元帳 (General Ledger with Sub-tabs)
+    //  Tabs: B/S(資産) / B/S(負債・純資産) / 損益計算書
     // ============================================================
     const ledgerSubNav = document.getElementById('ledger-sub-nav');
     const ledgerStartInput = document.getElementById('ledger-start');
@@ -751,16 +752,112 @@ document.addEventListener('DOMContentLoaded', () => {
     const ledgerDetailBack = document.getElementById('ledger-detail-back');
     const ledgerDetailTitle = document.getElementById('ledger-detail-title');
     const ledgerDetailContent = document.getElementById('ledger-detail-content');
+    const ledgerYearSelect = document.getElementById('ledger-year-select');
+    const ledgerPresets = document.getElementById('ledger-presets');
 
-    const tbContent = document.getElementById('tb-content');
-    const bsContent = document.getElementById('bs-content');
+    const bsAssetsContent = document.getElementById('bs-assets-content');
+    const bsLiabilitiesContent = document.getElementById('bs-liabilities-content');
     const plContent = document.getElementById('pl-content');
 
-    // Set default dates
-    ledgerStartInput.value = fy.start;
-    ledgerEndInput.value = fy.end;
+    let currentLedgerSubTab = 'bs-assets';
+    let currentPreset = 'ytd';
 
-    let currentLedgerSubTab = 'trial-balance';
+    // --- Year selector population ---
+    const thisYear = new Date().getFullYear();
+    for (let y = thisYear - 3; y <= thisYear + 1; y++) {
+        const opt = document.createElement('option');
+        opt.value = y;
+        opt.textContent = y + '年';
+        if (y === thisYear) opt.selected = true;
+        ledgerYearSelect.appendChild(opt);
+    }
+
+    // --- Period Preset Logic ---
+    function getSelectedYear() {
+        return parseInt(ledgerYearSelect.value) || thisYear;
+    }
+
+    function applyPreset(preset) {
+        currentPreset = preset;
+        const y = getSelectedYear();
+        const now = new Date();
+        const todayDate = todayStr();
+
+        switch (preset) {
+            case 'ytd':
+                // Year-to-date: Jan 1 ~ today (or Dec 31 if viewing past year)
+                ledgerStartInput.value = `${y}-01-01`;
+                ledgerEndInput.value = (y === now.getFullYear()) ? todayDate : `${y}-12-31`;
+                break;
+            case 'year':
+                // Full year: Jan 1 ~ Dec 31
+                ledgerStartInput.value = `${y}-01-01`;
+                ledgerEndInput.value = `${y}-12-31`;
+                break;
+            case 'month': {
+                // Current month (of selected year)
+                const m = (y === now.getFullYear()) ? now.getMonth() + 1 : 1;
+                const mStr = String(m).padStart(2, '0');
+                const lastDay = new Date(y, m, 0).getDate();
+                ledgerStartInput.value = `${y}-${mStr}-01`;
+                ledgerEndInput.value = `${y}-${mStr}-${String(lastDay).padStart(2, '0')}`;
+                break;
+            }
+            case 'prev-month': {
+                // Previous month
+                let pm, py;
+                if (y === now.getFullYear()) {
+                    const d = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+                    pm = d.getMonth() + 1;
+                    py = d.getFullYear();
+                } else {
+                    pm = 12;
+                    py = y;
+                }
+                const pmStr = String(pm).padStart(2, '0');
+                const lastDay = new Date(py, pm, 0).getDate();
+                ledgerStartInput.value = `${py}-${pmStr}-01`;
+                ledgerEndInput.value = `${py}-${pmStr}-${String(lastDay).padStart(2, '0')}`;
+                break;
+            }
+        }
+
+        // Update preset button active states
+        ledgerPresets.querySelectorAll('.preset-btn').forEach(b => b.classList.remove('active'));
+        const activeBtn = ledgerPresets.querySelector(`[data-period="${preset}"]`);
+        if (activeBtn) activeBtn.classList.add('active');
+    }
+
+    function setDefaultDatesForTab() {
+        const y = getSelectedYear();
+        if (currentLedgerSubTab === 'profit-loss') {
+            // P/L: Full year Jan 1 ~ Dec 31
+            applyPreset('year');
+        } else {
+            // B/S: YTD Jan 1 ~ today
+            applyPreset('ytd');
+        }
+    }
+
+    // Set initial dates
+    setDefaultDatesForTab();
+
+    // Preset button click
+    ledgerPresets.addEventListener('click', (e) => {
+        const btn = e.target.closest('.preset-btn');
+        if (!btn) return;
+        const period = btn.dataset.period;
+        if (period) {
+            applyPreset(period);
+            loadCurrentLedgerSubTab();
+        }
+    });
+
+    // Year selector change
+    ledgerYearSelect.addEventListener('change', () => {
+        applyPreset(currentPreset);
+        loadCurrentLedgerSubTab();
+    });
 
     // Sub-tab switching
     ledgerSubNav.addEventListener('click', (e) => {
@@ -781,15 +878,16 @@ document.addEventListener('DOMContentLoaded', () => {
         // Hide drill-down detail when switching tabs
         hideLedgerDetail();
 
-        // Load data
+        // Set default period for this tab type, then load
+        setDefaultDatesForTab();
         loadCurrentLedgerSubTab();
     });
 
     ledgerApplyBtn.addEventListener('click', loadCurrentLedgerSubTab);
 
     function loadCurrentLedgerSubTab() {
-        if (currentLedgerSubTab === 'trial-balance') loadTrialBalance();
-        else if (currentLedgerSubTab === 'balance-sheet') loadBalanceSheet();
+        if (currentLedgerSubTab === 'bs-assets') loadBSAssets();
+        else if (currentLedgerSubTab === 'bs-liabilities') loadBSLiabilities();
         else if (currentLedgerSubTab === 'profit-loss') loadProfitLoss();
     }
 
@@ -852,173 +950,134 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
-    // --- Trial Balance ---
-    async function loadTrialBalance() {
-        const params = new URLSearchParams();
-        if (ledgerStartInput.value) params.set('start_date', ledgerStartInput.value);
-        if (ledgerEndInput.value) params.set('end_date', ledgerEndInput.value);
-
-        try {
-            const data = await fetchAPI('/api/trial-balance?' + params.toString());
-            renderTrialBalance(data.balances || []);
-        } catch (err) {
-            showToast('残高一覧表の読み込みに失敗しました', true);
+    // Helper: build a clickable account table with drill-down
+    function buildAccountTable(items, showSectionTitle = '') {
+        let html = '';
+        if (showSectionTitle) {
+            html += `<div class="pl-section-title" style="margin:0.75rem 0 0.5rem;">${showSectionTitle}</div>`;
         }
-    }
+        html += `<table class="tb-table">
+            <thead><tr>
+                <th>コード</th>
+                <th>勘定科目</th>
+                <th class="text-right">期首残高</th>
+                <th class="text-right">借方合計</th>
+                <th class="text-right">貸方合計</th>
+                <th class="text-right">残高</th>
+            </tr></thead><tbody>`;
 
-    function renderTrialBalance(balances) {
-        if (!balances.length) {
-            tbContent.innerHTML = '<p style="text-align:center;color:var(--text-dim);padding:2rem;">データがありません</p>';
-            return;
-        }
-
-        let grandDebit = 0, grandCredit = 0;
-
-        let html = `<table class="tb-table">
-            <thead>
-                <tr>
-                    <th>コード</th>
-                    <th>勘定科目</th>
-                    <th>科目区分</th>
-                    <th class="text-right">期首残高</th>
-                    <th class="text-right">借方合計</th>
-                    <th class="text-right">貸方合計</th>
-                    <th class="text-right">残高</th>
-                </tr>
-            </thead>
-            <tbody>`;
-
-        balances.forEach(b => {
-            grandDebit += b.debit_total;
-            grandCredit += b.credit_total;
-            html += `
-                <tr class="tb-row" data-account-id="${b.account_id}" style="cursor:pointer;">
-                    <td>${b.code}</td>
-                    <td>${b.name}</td>
-                    <td>${b.account_type}</td>
-                    <td class="text-right">${fmt(b.opening_balance)}</td>
-                    <td class="text-right">${fmt(b.debit_total)}</td>
-                    <td class="text-right">${fmt(b.credit_total)}</td>
-                    <td class="text-right" style="font-weight:600;">${fmt(b.closing_balance)}</td>
-                </tr>`;
+        items.forEach(b => {
+            html += `<tr class="tb-row clickable" data-account-id="${b.account_id}" style="cursor:pointer;">
+                <td>${b.code}</td>
+                <td>${b.name}</td>
+                <td class="text-right">${fmt(b.opening_balance)}</td>
+                <td class="text-right">${fmt(b.debit_total)}</td>
+                <td class="text-right">${fmt(b.credit_total)}</td>
+                <td class="text-right" style="font-weight:600;">${fmt(b.closing_balance)}</td>
+            </tr>`;
         });
 
         html += `</tbody></table>`;
+        return html;
+    }
 
-        html += `<div class="tb-grand-total">
-            <span>借方合計: <strong>${fmt(grandDebit)}</strong></span>
-            <span>貸方合計: <strong>${fmt(grandCredit)}</strong></span>
-            <span>差額: <strong>${fmt(grandDebit - grandCredit)}</strong></span>
-        </div>`;
-
-        tbContent.innerHTML = html;
-
-        // Drill-down: click account row → show detail within ledger view
-        tbContent.querySelectorAll('.tb-row').forEach(row => {
+    function attachDrilldown(container) {
+        container.querySelectorAll('.clickable').forEach(row => {
             row.addEventListener('click', () => {
                 showAccountDetail(row.dataset.accountId);
             });
         });
     }
 
-    // --- Balance Sheet ---
-    async function loadBalanceSheet() {
+    // --- B/S（資産） ---
+    async function loadBSAssets() {
         const params = new URLSearchParams();
         if (ledgerStartInput.value) params.set('start_date', ledgerStartInput.value);
         if (ledgerEndInput.value) params.set('end_date', ledgerEndInput.value);
 
         try {
             const data = await fetchAPI('/api/trial-balance?' + params.toString());
-            renderBalanceSheet(data.balances || []);
+            renderBSAssets(data.balances || []);
         } catch (err) {
-            showToast('貸借対照表の読み込みに失敗しました', true);
+            showToast('貸借対照表（資産）の読み込みに失敗しました', true);
         }
     }
 
-    function renderBalanceSheet(balances) {
+    function renderBSAssets(balances) {
         const assets = balances.filter(b => b.account_type === '資産');
-        const liabilities = balances.filter(b => b.account_type === '負債');
-        const equity = balances.filter(b => b.account_type === '純資産');
 
-        if (!assets.length && !liabilities.length && !equity.length) {
-            bsContent.innerHTML = '<p style="text-align:center;color:var(--text-dim);padding:2rem;">データがありません</p>';
+        if (!assets.length) {
+            bsAssetsContent.innerHTML = '<p style="text-align:center;color:var(--text-dim);padding:2rem;">データがありません</p>';
             return;
         }
 
-        const assetTotal = assets.reduce((s, b) => s + b.closing_balance, 0);
-        const liabilityTotal = liabilities.reduce((s, b) => s + b.closing_balance, 0);
-        const equityTotal = equity.reduce((s, b) => s + b.closing_balance, 0);
-        const rightTotal = liabilityTotal + equityTotal;
+        const total = assets.reduce((s, b) => s + b.closing_balance, 0);
 
-        function buildRows(items) {
-            return items.map(b => `
-                <tr class="clickable" data-account-id="${b.account_id}">
-                    <td>${b.code}</td>
-                    <td>${b.name}</td>
-                    <td class="text-right">${fmt(b.closing_balance)}</td>
-                </tr>`).join('');
-        }
+        let html = buildAccountTable(assets);
 
-        let html = '<div class="bs-container">';
-
-        html += `<div class="bs-side">
-            <div class="bs-side-title">資産の部</div>
-            <table class="bs-table">
-                <thead><tr><th>コード</th><th>勘定科目</th><th class="text-right">残高</th></tr></thead>
-                <tbody>
-                    ${buildRows(assets)}
-                    <tr class="bs-grand-total">
-                        <td colspan="2">資産合計</td>
-                        <td class="text-right">${fmt(assetTotal)}</td>
-                    </tr>
-                </tbody>
-            </table>
+        html += `<div class="tb-grand-total">
+            <span>資産合計: <strong>${fmt(total)}</strong></span>
         </div>`;
 
-        html += `<div class="bs-side">
-            <div class="bs-side-title">負債・純資産の部</div>
-            <table class="bs-table">
-                <thead><tr><th>コード</th><th>勘定科目</th><th class="text-right">残高</th></tr></thead>
-                <tbody>
-                    ${buildRows(liabilities)}
-                    <tr class="bs-subtotal">
-                        <td colspan="2">負債合計</td>
-                        <td class="text-right">${fmt(liabilityTotal)}</td>
-                    </tr>
-                    ${buildRows(equity)}
-                    <tr class="bs-subtotal">
-                        <td colspan="2">純資産合計</td>
-                        <td class="text-right">${fmt(equityTotal)}</td>
-                    </tr>
-                    <tr class="bs-grand-total">
-                        <td colspan="2">負債・純資産合計</td>
-                        <td class="text-right">${fmt(rightTotal)}</td>
-                    </tr>
-                </tbody>
-            </table>
-        </div>`;
-
-        html += '</div>';
-
-        const isBalanced = assetTotal === rightTotal;
-        html += `<div class="bs-balance-check ${isBalanced ? 'balanced' : 'unbalanced'}">
-            ${isBalanced
-                ? '✓ 貸借一致 (資産 = 負債 + 純資産)'
-                : `✗ 貸借不一致: 資産 ${fmt(assetTotal)} ≠ 負債+純資産 ${fmt(rightTotal)} (差額: ${fmt(assetTotal - rightTotal)})`
-            }
-        </div>`;
-
-        bsContent.innerHTML = html;
-
-        // Drill-down
-        bsContent.querySelectorAll('.clickable').forEach(row => {
-            row.addEventListener('click', () => {
-                showAccountDetail(row.dataset.accountId);
-            });
-        });
+        bsAssetsContent.innerHTML = html;
+        attachDrilldown(bsAssetsContent);
     }
 
-    // --- Profit & Loss ---
+    // --- B/S（負債・純資産） ---
+    async function loadBSLiabilities() {
+        const params = new URLSearchParams();
+        if (ledgerStartInput.value) params.set('start_date', ledgerStartInput.value);
+        if (ledgerEndInput.value) params.set('end_date', ledgerEndInput.value);
+
+        try {
+            const data = await fetchAPI('/api/trial-balance?' + params.toString());
+            renderBSLiabilities(data.balances || []);
+        } catch (err) {
+            showToast('貸借対照表（負債・純資産）の読み込みに失敗しました', true);
+        }
+    }
+
+    function renderBSLiabilities(balances) {
+        const liabilities = balances.filter(b => b.account_type === '負債');
+        const equity = balances.filter(b => b.account_type === '純資産');
+
+        if (!liabilities.length && !equity.length) {
+            bsLiabilitiesContent.innerHTML = '<p style="text-align:center;color:var(--text-dim);padding:2rem;">データがありません</p>';
+            return;
+        }
+
+        const liabilityTotal = liabilities.reduce((s, b) => s + b.closing_balance, 0);
+        const equityTotal = equity.reduce((s, b) => s + b.closing_balance, 0);
+        const grandTotal = liabilityTotal + equityTotal;
+
+        let html = '';
+
+        // 負債セクション
+        if (liabilities.length) {
+            html += buildAccountTable(liabilities, '負債の部');
+            html += `<div class="tb-grand-total" style="margin-bottom:1rem;">
+                <span>負債合計: <strong>${fmt(liabilityTotal)}</strong></span>
+            </div>`;
+        }
+
+        // 純資産セクション
+        if (equity.length) {
+            html += buildAccountTable(equity, '純資産の部');
+            html += `<div class="tb-grand-total" style="margin-bottom:1rem;">
+                <span>純資産合計: <strong>${fmt(equityTotal)}</strong></span>
+            </div>`;
+        }
+
+        // 合計
+        html += `<div class="tb-grand-total" style="font-size:1rem;">
+            <span>負債・純資産合計: <strong>${fmt(grandTotal)}</strong></span>
+        </div>`;
+
+        bsLiabilitiesContent.innerHTML = html;
+        attachDrilldown(bsLiabilitiesContent);
+    }
+
+    // --- 損益計算書 ---
     async function loadProfitLoss() {
         const params = new URLSearchParams();
         if (ledgerStartInput.value) params.set('start_date', ledgerStartInput.value);
@@ -1045,41 +1104,21 @@ document.addEventListener('DOMContentLoaded', () => {
         const expenseTotal = expenses.reduce((s, b) => s + b.closing_balance, 0);
         const netIncome = revenueTotal - expenseTotal;
 
-        function buildSection(title, items, subtotalLabel, subtotal) {
-            let html = `<div class="pl-section">
-                <div class="pl-section-title">${title}</div>
-                <table class="pl-table">
-                    <thead><tr>
-                        <th>コード</th>
-                        <th>勘定科目</th>
-                        <th class="text-right">借方合計</th>
-                        <th class="text-right">貸方合計</th>
-                        <th class="text-right">金額</th>
-                    </tr></thead>
-                    <tbody>`;
-
-            items.forEach(b => {
-                html += `<tr class="clickable" data-account-id="${b.account_id}">
-                    <td>${b.code}</td>
-                    <td>${b.name}</td>
-                    <td class="text-right">${fmt(b.debit_total)}</td>
-                    <td class="text-right">${fmt(b.credit_total)}</td>
-                    <td class="text-right" style="font-weight:600;">${fmt(b.closing_balance)}</td>
-                </tr>`;
-            });
-
-            html += `<tr class="pl-subtotal">
-                    <td colspan="4">${subtotalLabel}</td>
-                    <td class="text-right">${fmt(subtotal)}</td>
-                </tr>
-                </tbody></table></div>`;
-            return html;
-        }
-
         let html = '';
-        html += buildSection('収益の部', revenues, '収益合計', revenueTotal);
-        html += buildSection('費用の部', expenses, '費用合計', expenseTotal);
 
+        // 収益の部
+        html += buildAccountTable(revenues, '収益の部');
+        html += `<div class="tb-grand-total" style="margin-bottom:1rem;">
+            <span>収益合計: <strong>${fmt(revenueTotal)}</strong></span>
+        </div>`;
+
+        // 費用の部
+        html += buildAccountTable(expenses, '費用の部');
+        html += `<div class="tb-grand-total" style="margin-bottom:1rem;">
+            <span>費用合計: <strong>${fmt(expenseTotal)}</strong></span>
+        </div>`;
+
+        // 当期純利益 / 当期純損失
         const isProfit = netIncome >= 0;
         html += `<div class="pl-net-income ${isProfit ? 'profit' : 'loss'}">
             <span>${isProfit ? '当期純利益' : '当期純損失'}</span>
@@ -1087,13 +1126,7 @@ document.addEventListener('DOMContentLoaded', () => {
         </div>`;
 
         plContent.innerHTML = html;
-
-        // Drill-down
-        plContent.querySelectorAll('.clickable').forEach(row => {
-            row.addEventListener('click', () => {
-                showAccountDetail(row.dataset.accountId);
-            });
-        });
+        attachDrilldown(plContent);
     }
 
     // ============================================================
