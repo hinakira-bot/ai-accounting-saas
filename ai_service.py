@@ -72,7 +72,7 @@ def analyze_csv(csv_bytes: bytes, history: list = None) -> list:
         rows = list(reader)
         csv_text = "\n".join([",".join(row) for row in rows[:60]])
 
-        model = genai.GenerativeModel('gemini-2.0-flash-exp')
+        model = genai.GenerativeModel('gemini-2.5-flash')
         history_str = "\n".join([f"- {h['counterparty']}: {h['memo']} => {h['account']}" for h in history[:50]])
 
         prompt = get_analysis_prompt(history_str, "CSV明細（クレジットカードまたは銀行）") + f"\n\nデータ:\n{csv_text}"
@@ -90,7 +90,7 @@ def analyze_document(file_bytes: bytes, mime_type: str, history: list = None) ->
     if history is None:
         history = []
     print(f"Analyzing {mime_type}...")
-    models = ['gemini-2.0-flash-exp', 'gemini-1.5-flash']
+    models = ['gemini-2.5-flash', 'gemini-2.0-flash']
     history_str = "\n".join([f"- {h['counterparty']}: {h['memo']} => {h['account']}" for h in history[:50]])
 
     for model_name in models:
@@ -174,7 +174,7 @@ def predict_accounts(data: list, history: list, valid_accounts: list, gemini_api
     """
 
     try:
-        model = genai.GenerativeModel('gemini-2.0-flash-exp')
+        model = genai.GenerativeModel('gemini-2.5-flash')
         response = model.generate_content(prompt)
         content = clean_json(response.text)
         predictions = json.loads(content)

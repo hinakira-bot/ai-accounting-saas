@@ -37,6 +37,46 @@ def get_accounts(active_only=True):
         conn.close()
 
 
+def create_account(code: str, name: str, account_type: str, tax_default: str = '10%') -> dict:
+    """Create a new account in accounts_master."""
+    conn = get_db()
+    try:
+        # Auto display_order from code
+        display_order = int(code) if code.isdigit() else 0
+        conn.execute(
+            "INSERT INTO accounts_master (code, name, account_type, tax_default, display_order) VALUES (?, ?, ?, ?, ?)",
+            (code, name, account_type, tax_default, display_order)
+        )
+        conn.commit()
+        row = conn.execute(
+            "SELECT id, code, name, account_type, tax_default, display_order FROM accounts_master WHERE code = ?",
+            (code,)
+        ).fetchone()
+        return dict(row) if row else {}
+    finally:
+        conn.close()
+
+
+def delete_account(account_id: int) -> bool:
+    """Soft-delete an account (set is_active = 0). Prevents deletion if used in journal entries."""
+    conn = get_db()
+    try:
+        used = conn.execute(
+            "SELECT COUNT(*) FROM journal_entries WHERE (debit_account_id = ? OR credit_account_id = ?) AND is_deleted = 0",
+            (account_id, account_id)
+        ).fetchone()[0]
+        if used > 0:
+            return False  # Cannot delete: account is in use
+        conn.execute(
+            "UPDATE accounts_master SET is_active = 0, updated_at = datetime('now') WHERE id = ?",
+            (account_id,)
+        )
+        conn.commit()
+        return True
+    finally:
+        conn.close()
+
+
 def get_account_by_name(name: str):
     """Get account by name."""
     conn = get_db()
@@ -327,18 +367,17 @@ def get_trial_balance(start_date=None, end_date=None) -> list:
             else:
                 closing = opening + credit - debit
 
-            # Only include accounts with activity or opening balance
-            if opening != 0 or debit != 0 or credit != 0:
-                result.append({
-                    "account_id": aid,
-                    "code": acc['code'],
-                    "name": acc['name'],
-                    "account_type": atype,
-                    "opening_balance": opening,
-                    "debit_total": debit,
-                    "credit_total": credit,
-                    "closing_balance": closing,
-                })
+            # Include ALL active accounts (show 0 balance for unused accounts)
+            result.append({
+                "account_id": aid,
+                "code": acc['code'],
+                "name": acc['name'],
+                "account_type": atype,
+                "opening_balance": opening,
+                "debit_total": debit,
+                "credit_total": credit,
+                "closing_balance": closing,
+            })
 
         return result
     finally:

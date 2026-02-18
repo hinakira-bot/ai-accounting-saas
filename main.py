@@ -67,6 +67,33 @@ def api_accounts():
     return jsonify({"accounts": accounts})
 
 
+@app.route('/api/accounts', methods=['POST'])
+def api_accounts_create():
+    """Create a new account."""
+    data = request.get_json()
+    code = (data.get('code') or '').strip()
+    name = (data.get('name') or '').strip()
+    account_type = (data.get('account_type') or '').strip()
+    tax_default = (data.get('tax_default') or '10%').strip()
+    if not code or not name or not account_type:
+        return jsonify({"status": "error", "error": "コード・科目名・区分は必須です"}), 400
+    try:
+        account = models.create_account(code, name, account_type, tax_default)
+        return jsonify({"status": "success", "account": account})
+    except Exception as e:
+        return jsonify({"status": "error", "error": str(e)}), 400
+
+
+@app.route('/api/accounts/<int:account_id>', methods=['DELETE'])
+def api_accounts_delete(account_id):
+    """Soft-delete an account."""
+    ok = models.delete_account(account_id)
+    if ok:
+        return jsonify({"status": "success"})
+    else:
+        return jsonify({"status": "error", "error": "この科目は仕訳で使用中のため削除できません"}), 400
+
+
 # ============================
 #  Journal Entries API (CRUD)
 # ============================

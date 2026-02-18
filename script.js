@@ -107,11 +107,12 @@ document.addEventListener('DOMContentLoaded', () => {
     // ============================================================
     // View loaders: called when a view becomes active
     const VIEW_LOADERS = {
-        'journal-input': () => { /* already loaded on login */ },
+        'journal-input': () => { loadRecentEntries(); },
         'scan': () => {},
         'journal-book': () => loadJournalBook(),
         'ledger': () => loadCurrentLedgerSubTab(),
         'counterparty': () => loadCounterpartyList(),
+        'accounts': () => loadAccountsList(),
         'opening-balance': () => loadOpeningBalances(),
         'backup': () => {},
         'output': () => {},
@@ -147,9 +148,9 @@ document.addEventListener('DOMContentLoaded', () => {
         if (VIEW_LOADERS[viewId]) VIEW_LOADERS[viewId]();
     }
 
-    // Menu tile click
+    // Menu tile click (both .menu-tile and .menu-tile-sm)
     menuGrid.addEventListener('click', (e) => {
-        const tile = e.target.closest('.menu-tile');
+        const tile = e.target.closest('.menu-tile') || e.target.closest('.menu-tile-sm');
         if (!tile) return;
         const viewId = tile.dataset.view;
         if (viewId) showView(viewId);
@@ -246,6 +247,50 @@ document.addEventListener('DOMContentLoaded', () => {
         const y = now.getFullYear();
         return { start: `${y}-01-01`, end: `${y}-12-31` };
     }
+
+    // ============================================================
+    //  Section 6b: Help Button Tooltips (?)
+    // ============================================================
+    (function initHelpButtons() {
+        let openTooltip = null;
+        function closeTooltip() {
+            if (openTooltip) { openTooltip.remove(); openTooltip = null; }
+        }
+        document.addEventListener('click', (e) => {
+            const btn = e.target.closest('.help-btn');
+            const prevBtn = openTooltip ? openTooltip._btn : null;
+            closeTooltip();
+            if (!btn || btn === prevBtn) return;   // toggle off
+            e.preventDefault();
+            e.stopPropagation();
+
+            const tip = document.createElement('div');
+            tip.className = 'help-tooltip';
+            tip.textContent = btn.dataset.help;
+            tip._btn = btn;
+            document.body.appendChild(tip);
+            openTooltip = tip;
+
+            // Position with fixed: below the button
+            const br = btn.getBoundingClientRect();
+            const tw = 230;  // tooltip width
+            let left = br.left + br.width / 2 - tw / 2;
+            let arrowLeft = '50%';
+            // Keep within viewport
+            if (left < 8) {
+                arrowLeft = Math.max(12, br.left + br.width / 2 - 8) + 'px';
+                left = 8;
+            } else if (left + tw > window.innerWidth - 8) {
+                const oldLeft = left;
+                left = window.innerWidth - 8 - tw;
+                arrowLeft = Math.min(tw - 12, br.left + br.width / 2 - left) + 'px';
+            }
+            tip.style.top = (br.bottom + 8) + 'px';
+            tip.style.left = left + 'px';
+            tip.style.setProperty('--arrow-left', arrowLeft);
+        });
+        window.addEventListener('scroll', closeTooltip, true);
+    })();
 
     // ============================================================
     //  Section 7: View 1 — 仕訳入力 (Journal Entry) [TKC FX2 Style]
@@ -460,6 +505,17 @@ document.addEventListener('DOMContentLoaded', () => {
     const scanAddFile = document.getElementById('scan-add-file');
     const scanAddInput = document.getElementById('scan-add-input');
     const scanDupAlert = document.getElementById('scan-duplicate-alert');
+    const scanClearAll = document.getElementById('scan-clear-all');
+
+    // Clear all scanned results
+    scanClearAll.addEventListener('click', () => {
+        if (!scanResults.length) return;
+        if (!confirm('解析結果をすべて削除しますか？')) return;
+        scanResults = [];
+        scanTbody.innerHTML = '';
+        scanResultsCard.classList.add('hidden');
+        showToast('解析結果をすべて削除しました');
+    });
 
     dropZone.addEventListener('dragover', (e) => { e.preventDefault(); dropZone.classList.add('drag-over'); });
     dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'));
@@ -1005,12 +1061,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function renderBSAssets(balances) {
         const assets = balances.filter(b => b.account_type === '資産');
-
-        if (!assets.length) {
-            bsAssetsContent.innerHTML = '<p style="text-align:center;color:var(--text-dim);padding:2rem;">データがありません</p>';
-            return;
-        }
-
         const total = assets.reduce((s, b) => s + b.closing_balance, 0);
 
         let html = buildAccountTable(assets);
@@ -1040,12 +1090,6 @@ document.addEventListener('DOMContentLoaded', () => {
     function renderBSLiabilities(balances) {
         const liabilities = balances.filter(b => b.account_type === '負債');
         const equity = balances.filter(b => b.account_type === '純資産');
-
-        if (!liabilities.length && !equity.length) {
-            bsLiabilitiesContent.innerHTML = '<p style="text-align:center;color:var(--text-dim);padding:2rem;">データがありません</p>';
-            return;
-        }
-
         const liabilityTotal = liabilities.reduce((s, b) => s + b.closing_balance, 0);
         const equityTotal = equity.reduce((s, b) => s + b.closing_balance, 0);
         const grandTotal = liabilityTotal + equityTotal;
@@ -1053,20 +1097,16 @@ document.addEventListener('DOMContentLoaded', () => {
         let html = '';
 
         // 負債セクション
-        if (liabilities.length) {
-            html += buildAccountTable(liabilities, '負債の部');
-            html += `<div class="tb-grand-total" style="margin-bottom:1rem;">
-                <span>負債合計: <strong>${fmt(liabilityTotal)}</strong></span>
-            </div>`;
-        }
+        html += buildAccountTable(liabilities, '負債の部');
+        html += `<div class="tb-grand-total" style="margin-bottom:1rem;">
+            <span>負債合計: <strong>${fmt(liabilityTotal)}</strong></span>
+        </div>`;
 
         // 純資産セクション
-        if (equity.length) {
-            html += buildAccountTable(equity, '純資産の部');
-            html += `<div class="tb-grand-total" style="margin-bottom:1rem;">
-                <span>純資産合計: <strong>${fmt(equityTotal)}</strong></span>
-            </div>`;
-        }
+        html += buildAccountTable(equity, '純資産の部');
+        html += `<div class="tb-grand-total" style="margin-bottom:1rem;">
+            <span>純資産合計: <strong>${fmt(equityTotal)}</strong></span>
+        </div>`;
 
         // 合計
         html += `<div class="tb-grand-total" style="font-size:1rem;">
@@ -1094,12 +1134,6 @@ document.addEventListener('DOMContentLoaded', () => {
     function renderProfitLoss(balances) {
         const revenues = balances.filter(b => b.account_type === '収益');
         const expenses = balances.filter(b => b.account_type === '費用');
-
-        if (!revenues.length && !expenses.length) {
-            plContent.innerHTML = '<p style="text-align:center;color:var(--text-dim);padding:2rem;">データがありません</p>';
-            return;
-        }
-
         const revenueTotal = revenues.reduce((s, b) => s + b.closing_balance, 0);
         const expenseTotal = expenses.reduce((s, b) => s + b.closing_balance, 0);
         const netIncome = revenueTotal - expenseTotal;
@@ -1250,6 +1284,83 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function escAttr(s) {
         return (s || '').replace(/"/g, '&quot;').replace(/'/g, '&#39;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    }
+
+    // ============================================================
+    //  Section 11b: View — 勘定科目管理 (Accounts Management)
+    // ============================================================
+    const accTbody = document.getElementById('acc-tbody');
+    const accAddBtn = document.getElementById('acc-add-btn');
+    const accCodeInput = document.getElementById('acc-code');
+    const accNameInput = document.getElementById('acc-name');
+    const accTypeSelect = document.getElementById('acc-type');
+    const accTaxSelect = document.getElementById('acc-tax');
+
+    async function loadAccountsList() {
+        const data = await fetchAPI('/api/accounts');
+        const accounts = data.accounts || [];
+        accTbody.innerHTML = accounts.map(a => `
+            <tr>
+                <td>${a.code}</td>
+                <td>${a.name}</td>
+                <td>${a.account_type}</td>
+                <td>${a.tax_default}</td>
+                <td><button class="btn-icon acc-del" data-id="${a.id}" title="削除">🗑</button></td>
+            </tr>
+        `).join('');
+
+        accTbody.querySelectorAll('.acc-del').forEach(btn => {
+            btn.addEventListener('click', async () => {
+                const id = btn.dataset.id;
+                if (!confirm('この勘定科目を削除しますか？')) return;
+                try {
+                    const res = await fetchAPI(`/api/accounts/${id}`, 'DELETE');
+                    if (res.status === 'success') {
+                        showToast('勘定科目を削除しました');
+                        loadAccountsList();
+                        refreshAccountDatalist();
+                    } else {
+                        showToast(res.error || '削除に失敗しました', true);
+                    }
+                } catch (err) {
+                    showToast('通信エラー', true);
+                }
+            });
+        });
+    }
+
+    accAddBtn.addEventListener('click', async () => {
+        const code = accCodeInput.value.trim();
+        const name = accNameInput.value.trim();
+        const account_type = accTypeSelect.value;
+        const tax_default = accTaxSelect.value;
+        if (!code || !name) {
+            showToast('コードと科目名は必須です', true);
+            return;
+        }
+        try {
+            const res = await fetchAPI('/api/accounts', 'POST', { code, name, account_type, tax_default });
+            if (res.status === 'success') {
+                showToast(`勘定科目「${name}」を追加しました`);
+                accCodeInput.value = '';
+                accNameInput.value = '';
+                loadAccountsList();
+                refreshAccountDatalist();
+            } else {
+                showToast(res.error || '追加に失敗しました', true);
+            }
+        } catch (err) {
+            showToast('通信エラー', true);
+        }
+    });
+
+    // Refresh account datalist used in journal entry form
+    function refreshAccountDatalist() {
+        fetchAPI('/api/accounts').then(data => {
+            const dl = document.getElementById('account-list');
+            if (!dl) return;
+            dl.innerHTML = (data.accounts || []).map(a => `<option value="${a.name}">`).join('');
+        });
     }
 
     // ============================================================
